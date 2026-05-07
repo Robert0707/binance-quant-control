@@ -2,7 +2,7 @@
 name = "binance-quant-control"
 version = "0.1.0"
 description = "Safe-by-default Binance quant analysis and workflow control plane for OpenClaw"
-readme = "PROJECT.md"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.28,<1",
