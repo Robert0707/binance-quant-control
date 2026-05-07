@@ -1,0 +1,129 @@
+fallback:
+  id: fallback
+  summary: Review current workflow, classify the symbol, and stay in simulation-first mode.
+  operator_prompt: >
+    Review the current quant workflow, keep live boundaries unchanged, classify
+    the symbol, and route the next action into simulation-first analysis,
+    backtest, and review.
+  actions:
+    - route-symbol
+    - analyze
+    - backtest
+    - review-closed-trades
+  resources:
+    - docs/workflows/multi-asset-simulation-first-workflow.md
+
+intents:
+  - id: simulation-first-upgrade
+    phrases:
+      - 我加入了模擬單
+      - 測試新策略
+      - 進去模擬單做測試
+      - 大量測試
+      - 正盈利在做實單
+      - demo 測試
+    summary: Upgrade the lane into simulation-first strategy validation.
+    operator_prompt: >
+      Keep live trading logic untouched, route the candidate symbol into the
+      correct asset lane, run market analysis, always create a paper/demo
+      market-validation record immediately after analysis, and log the result
+      for later review and convergence checks.
+    actions:
+      - route-symbol
+      - analyze
+      - paper-order
+      - backtest
+      - review-closed-trades
+    resources:
+      - config/asset-routing.default.yaml
+      - config/autonomous-simulation-lane.default.yaml
+      - docs/workflows/multi-asset-simulation-first-workflow.md
+
+  - id: full-process-review
+    phrases:
+      - 檢討整個流程
+      - 資料收集
+      - 策略使用
+      - 下單顧單
+      - 回測
+      - 檢討優化策略
+      - 詳細分流
+    summary: Review and split the full trading process into explicit lanes.
+    operator_prompt: >
+      Break the trading workflow into data collection, strategy routing,
+      simulation execution, position protection, backtest, and post-trade
+      review lanes without changing execution-core logic.
+    actions:
+      - route-intent
+      - route-symbol
+      - run_autonomous_trader
+      - run_strategy_optimizer
+    resources:
+      - docs/workflows/multi-asset-simulation-first-workflow.md
+      - docs/workflows/strategy-review-automation.md
+
+  - id: reduce-manual-steps
+    phrases:
+      - 一個指令一個動作篇多
+      - 我時間沒有那多
+      - 提升一個層級
+      - 自動化
+      - 我只想下一個指令
+      - 輸入我想做的幣種期望收益最高槓桿
+    summary: Reduce operator chatter by bundling repeatable steps into one lane.
+    operator_prompt: >
+      Minimize manual operator steps by using the one-command mission lane
+      first, then falling back to autonomous simulation and fixed review /
+      optimizer workflows.
+    actions:
+      - mission
+      - run_autonomous_trader
+      - run_strategy_optimizer
+      - review-closed-trades
+    resources:
+      - config/mission-control.default.yaml
+      - docs/workflows/one-command-mission-control.md
+      - config/autonomous-simulation-lane.default.yaml
+      - docs/workflows/human-intent-to-robot-actions.md
+
+  - id: hermes-start-continuous-testnet-trading
+    phrases:
+      - 開始交易
+      - 開使交易
+      - 開始一直跑
+      - 開始自動交易
+      - hermes開始交易
+      - ai trader開始交易
+    summary: Start the Hermes-controlled continuous testnet trading loop.
+    operator_prompt: >
+      Enable the Hermes trade loop state, release only Hermes-owned stop
+      pauses, then run repeated cycles: review closed trades, auto-pause
+      preflight, strategy parameter adjustment, AI readiness scan, execution
+      ticket preflight, testnet execution, and post-execution position scan.
+      Mainnet live remains disabled.
+    actions:
+      - trade-session start
+    resources:
+      - config/hermes-trade-loop.default.yaml
+      - docs/workflows/hermes-continuous-trade-loop.md
+
+  - id: hermes-stop-continuous-testnet-trading
+    phrases:
+      - 停止交易
+      - 結束交易
+      - 關閉交易
+      - 退出交易
+      - 停止自動交易
+      - 停
+      - hermes停止交易
+      - ai trader停止交易
+    summary: Stop the Hermes-controlled trading loop and set the kill-switch.
+    operator_prompt: >
+      Disable the Hermes trade loop state and write a Hermes-owned kill-switch
+      pause so no new entries can be opened until the operator starts the loop
+      again.
+    actions:
+      - trade-session stop
+    resources:
+      - config/hermes-trade-loop.default.yaml
+      - docs/workflows/hermes-continuous-trade-loop.md

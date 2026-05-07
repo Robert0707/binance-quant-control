@@ -1,0 +1,68 @@
+meta:
+  lane_mode: market_bot_discovery
+  description: >
+    Research-only discovery lane for finding positive-expectancy cohorts before
+    they are admitted into the protective core symbol map. This lane intentionally
+    widens symbol/interval/family coverage, but it never opens orders and every
+    survivor must still pass market-bot-gate.
+
+strategy:
+  strategy_config: strategy-core-high-win-research.yaml
+
+universe:
+  include_top_futures_volume: false
+  symbols:
+    - TRXUSDT
+    - ETHUSDT
+    - BTCUSDT
+  intervals: [1h, 4h]
+  limit: 5000
+
+ranking:
+  min_trades: 100
+  min_profit_factor: 1.25
+  min_win_rate: 45.0
+  max_stop_loss_ratio: 55.0
+  min_expectancy_r: 0.05
+  min_payoff_ratio: 1.20
+  target_metrics:
+    win_rate: 45.0
+    max_stop_loss_ratio: 55.0
+    expectancy_r: 0.05
+    payoff_ratio: 1.20
+  walk_forward_folds: 4
+  stress_top_n: 8
+  strategy_families:
+    - trend_continuation
+    - breakout
+    - trend_pullback
+    - liquidity_reclaim
+    - vwap_reclaim
+    - mean_reversion
+  slippage_bps_cases: [3.0, 8.0, 15.0]
+  weights:
+    out_of_sample_total_return: 0.18
+    return_over_drawdown: 0.20
+    profit_factor: 0.24
+    payoff_objective: 0.50
+    trade_count: 0.10
+    slippage_resilience: 0.14
+    walk_forward_stability: 0.14
+
+research_entry_gate:
+  enabled: true
+  route_side_veto: false
+  historical_signal_veto: false
+  shadow_route_side_veto: true
+  shadow_historical_signal_veto: true
+  route_side_min_samples: 30
+  route_side_min_profit_factor: 0.8
+  route_side_max_stop_loss_ratio: 70.0
+  historical_signal_min_samples: 20
+  historical_signal_min_profit_factor: 0.8
+
+safety:
+  allowed_modes: [backtest, paper, testnet]
+  mainnet_live_allowed: false
+  require_market_bot_gate_before_readiness: true
+  require_live_readiness_before_any_execution: true

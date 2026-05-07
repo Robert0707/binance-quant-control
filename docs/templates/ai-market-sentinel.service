@@ -1,0 +1,9 @@
+[Unit]
+Description=Binance Quant AI market sentinel one-shot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/robert/python/projects/binance-quant-control
+ExecStart=/home/robert/python/projects/binance-quant-control/.venv/bin/binance-quant-control ai-market-sentinel --skip-readiness --compact

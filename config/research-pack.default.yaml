@@ -1,0 +1,30 @@
+meta:
+  name: strategy-review-only
+  description: >
+    Scheduled quant lane reserved for closed-trade review and strategy
+    optimization only. Do not use this config to queue raw market-analysis
+    workflows.
+  lane_mode: strategy_review_only
+  manual_research_policy: operator_only
+  token_budget_mode: protected
+  ai_policy:
+    use_llm_only_for_event_bursts: true
+    prefer_scheduled_workflows: false
+    allow_scheduled_submit_analysis: false
+guardrails:
+  max_scheduled_limit: 240
+  reject_run_now: true
+  reject_analysis_profiles: true
+scheduled_review:
+  command: review_closed_trades
+  limit: 20
+  compact: true
+manual_research:
+  allowed: true
+  notes:
+    - Use `openclaw-quantctl analyze ...` for manual operator analysis.
+    - Use `openclaw-quantctl submit-analysis ...` only as an operator-only unscheduled action.
+defaults:
+  market: futures
+  limit: 500
+profiles: []

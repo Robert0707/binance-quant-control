@@ -1,0 +1,49 @@
+meta:
+  lane_mode: formal_live_lane
+  description: >
+    Formal live-entry lane. Uses the expanded coin universe, strict cloud and
+    local gates, 2U minimum expected profit, and skips entirely whenever an
+    existing position is already being managed by the guardian lane.
+
+strategy:
+  strategy_config: strategy-hermes-pro.auto.yaml
+
+automation:
+  review_closed_trades: true
+  auto_pause: true
+  review_limit: 20
+  execute_live_entries: true
+  execute_position_protection: false
+  force_simulation_after_analysis: true
+  require_digest_action: pre_trade_notify
+  require_strategy_analyzer_approval: true
+  min_strategy_analyzer_confidence: 0.75
+  max_managed_positions: 1
+  candidate_symbol_source: digest_selected
+
+integrations:
+  digest_enabled: true
+  reuse_cached_digest: true
+  digest_min_interval_minutes: 60
+  skip_digest_when_positions_open: true
+  digest_config: n8n-daily-digest.live-lane.json
+  hailo_enabled: true
+  hailo_config: config.yaml
+
+risk:
+  trailing_callback_pct: 0.6
+  margin_notional_usdt: 4.0
+  min_expected_profit_usdt: 2.5
+  require_professional_entry_gate: true
+  min_reward_risk: 1.35
+  min_net_profit_to_risk: 0.95
+  max_fee_profit_ratio: 0.3
+  max_slippage_profit_ratio: 0.25
+  max_volatility: 1.5
+  min_volume_zscore: -0.3
+  min_recent_reviews: 10
+  min_recent_win_rate: 0.58
+  min_recent_avg_r: 0.2
+  max_recent_stop_loss_ratio: 0.4
+  recent_lookback: 20
+  stop_loss_cooldown_hours: 8

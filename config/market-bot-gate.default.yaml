@@ -1,0 +1,56 @@
+meta:
+  lane_mode: market_bot_expectancy_gate
+  description: >
+    Mainstream-bot inspired research gate. This converts strategy/indicator/AI
+    signals into a fixed-risk expectancy candidate and blocks order flow until
+    the candidate has enough sample, payoff, PF, slippage resilience, and
+    feature-manifest traceability.
+
+targets:
+  min_trades: 100
+  min_profit_factor: 1.25
+  min_expectancy_r: 0.05
+  min_payoff_ratio: 1.20
+  min_out_of_sample_return_pct: 0.0
+  min_win_rate: 45.0
+  max_stop_loss_ratio: 55.0
+  min_walk_forward_stability: 0.60
+  min_slippage_resilience: 0.70
+  min_accepted_symbols: 6
+  min_correlation_groups: 3
+  min_beta_groups: 3
+  required_symbols: []
+  require_feature_manifest_hash: true
+
+workflow:
+  feature_dataset: >
+    openclaw-quantctl feature-dataset --symbols TRXUSDT,ETHUSDT,BTCUSDT
+    --intervals 1h,4h --limit 5000 --compact
+  alpha_research: >
+    openclaw-quantctl alpha-research --config config/core-high-win-research.default.yaml
+    --symbols TRXUSDT,ETHUSDT,BTCUSDT --intervals 1h,4h --limit 8000
+    --output-dir state/market-bot-trx-eth-btc-l8000 --compact
+  gate: >
+    openclaw-quantctl market-bot-gate
+    --alpha-report state/market-bot-trx-eth-btc-l8000/alpha-research-ranking.json
+    --compact
+
+mainstream_bot_boundaries:
+  freqtrade_like:
+    - cooldown after losses
+    - stoploss guard
+    - max drawdown protection
+    - pair/route lock after bad history
+  hummingbot_like:
+    - stop loss
+    - take profit
+    - time limit
+    - trailing runner only after protective structure exists
+  quantconnect_like:
+    - universe
+    - alpha
+    - portfolio construction
+    - risk management
+    - execution
+  nautilus_like:
+    - pre_trade_risk_before_order_creation

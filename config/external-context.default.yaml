@@ -1,0 +1,51 @@
+meta:
+  description: >
+    Free-first optional external market-context providers. CoinMarketCap plus
+    public DexScreener/RSS-style feeds are the default. Paid providers remain
+    optional filters and never create a trade entry by themselves.
+
+cache_root: /home/robert/python/projects/binance-quant-control/state/external-context
+timeout_seconds: 15
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - XAUTUSDT
+  - PAXGUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - LINKUSDT
+  - AAVEUSDT
+  - TRXUSDT
+
+env:
+  coinmarketcap_api_key: COINMARKETCAP_API_KEY
+  arkham_api_key: ARKHAM_API_KEY
+  cryptopanic_api_key: CRYPTOPANIC_API_KEY
+  glassnode_api_key: GLASSNODE_API_KEY
+
+providers:
+  coinmarketcap:
+    enabled: true
+    role: market-capital-flow
+    cost_tier: free-api-key
+  dexscreener:
+    enabled: true
+    role: on-chain-hot-token-rotation
+    cost_tier: free-public-endpoint
+  cryptopanic:
+    enabled: false
+    role: news-event-risk
+    cost_tier: paid-or-limited-optional
+  glassnode:
+    enabled: false
+    role: on-chain-btc-eth-macro
+    cost_tier: paid-optional
+    interval: 24h
+    metrics:
+      - market/price_usd_close
+  arkham:
+    enabled: false
+    role: whale-wallet-entity-flow
+    cost_tier: paid-optional

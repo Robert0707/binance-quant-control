@@ -1,0 +1,335 @@
+meta:
+  description: >
+    Web-informed, interval-aware, and backtest-gated strategy map for the
+    current 10-symbol focus universe. Families are mutually exclusive per
+    symbol/interval during research: indicators inside a family act as filters,
+    not duplicated votes.
+  generated_from:
+    - Binance USD-M Futures exchangeInfo: confirms all 10 symbols are TRADING perpetual contracts.
+    - TradingView indicator research: Bollinger/MACD/SuperTrend/JUMBO/VWAP/volume tools are filters inside family lanes.
+    - Local core-10-mtf-strategy-map-refined-l1500 backtests: only long-sample survivors remain active.
+    - Web research through 2026-05-02: 15m/1h crypto edges need momentum/reversal switching; 1d is treated as regime context.
+    - Mainstream bot boundary review on 2026-05-03: new entries must be controlled by exchange filters, pre-trade risk, triple-barrier exits, drawdown guards, liquidity filters, and funding/OI crowding vetoes.
+    - 2026-05-04 VWAP reclaim smoke: broad rolling-VWAP reclaim was connected but failed l1500 gate, so it remains research-only and is not a default core active lane.
+
+defaults:
+  interval: 4h
+  execution_lane: paper_research_only
+  promotion:
+    min_trades: 100
+    min_profit_factor: 1.50
+    min_win_rate: 65.0
+    max_stop_loss_ratio: 35.0
+    min_expectancy_r: 0.10
+    min_payoff_ratio: 1.15
+
+symbols:
+  BTCUSDT:
+    route_id: btc-core
+    asset_class: btc_core
+    primary_family: breakout
+    allowed_families: [vwap_reclaim, breakout, trend_pullback, trend_continuation, liquidity_reclaim]
+    blocked_families: [mean_reversion]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: []
+      1d: []
+    thesis: >
+      BTC is the deepest risk-asset lane, but the current breakout/continuation
+      lanes increased stop-loss drag in the 2026-05-02 MTF smoke run. Keep BTC
+      as a regime and liquidity reference until a positive pullback/breakout
+      model appears. The 2026-05-02 Fibonacci/OTE trend_pullback run stayed
+      negative on BTC 1h/4h, and the 2026-05-04 rolling VWAP reclaim smoke
+      produced no BTC sample, so BTC remains a regime reference only.
+    risk_filters:
+      - require_supertrend_or_follow_line_alignment
+      - require_macd_histogram_direction
+      - require_liquidity_sweep_reclaim_for_reversal_entries
+      - require_vwap_band_or_midline_reclaim
+      - reject_funding_oi_crowding_against_entry
+      - avoid_late_breakout_without_volume_confirmation
+      - active_entry_quarantined_until_positive_symbol_interval_cohort
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  ETHUSDT:
+    route_id: eth-core
+    asset_class: eth_core
+    primary_family: trend_pullback
+    allowed_families: [vwap_reclaim, trend_continuation, breakout, trend_pullback, liquidity_reclaim, mean_reversion]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: [trend_pullback]
+      1d: []
+    thesis: >
+      ETH tends to follow BTC beta with ecosystem risk-on bursts. The only
+      active smoke-test lane was 1h breakout, but it failed the 1500-bar check
+      with high stop-loss drag. Keep ETH inactive until a BTC-regime-filtered
+      pullback model is added. The 2026-05-02 trend_pullback check showed
+      ETH 4h near the target directionally but still only 4 trades; keep 4h
+      research active; VWAP reclaim was tested on 2026-05-04 but produced no
+      usable ETH sample, so it is quarantined from default core research.
+    risk_filters:
+      - require_btc_regime_not_conflicting
+      - require_ema_macd_adx_alignment
+      - require_fibonacci_ote_or_pullback_zone
+      - require_vwap_reclaim_or_btc_regime_alignment
+      - reject_high_news_risk
+      - require_btc_regime_not_conflicting_for_liquidity_reclaim
+      - reject_funding_oi_crowding_against_entry
+      - active_entry_quarantined_after_l1500_failure
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  XAUTUSDT:
+    route_id: xau-macro
+    asset_class: xau_macro
+    primary_family: mean_reversion
+    allowed_families: [vwap_reclaim, mean_reversion, trend_pullback, trend_continuation, liquidity_reclaim]
+    blocked_families: [breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: [trend_pullback]
+      1d: []
+    thesis: >
+      Tokenized gold should trade as macro/defensive exposure, not as a
+      high-beta crypto alt. The 1h mean-reversion lane failed the longer
+      sample; keep XAUT inactive until macro-event and gold-proxy liquidity
+      filters are implemented. The 4h trend_pullback lane is research-only and
+      must be treated as tokenized-gold macro exposure, not high-beta crypto.
+    risk_filters:
+      - use_low_leverage
+      - reject_major_macro_event_window
+      - require_fibonacci_ote_or_pullback_zone
+      - require_vwap_reclaim_for_gold_proxy_mean_reversion
+      - require_liquidity_reclaim_and_gold_proxy_confirmation
+      - require_gold_proxy_liquidity
+      - active_entry_quarantined_after_l1500_failure
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  PAXGUSDT:
+    route_id: xau-macro
+    asset_class: xau_macro
+    primary_family: trend_continuation
+    allowed_families: [vwap_reclaim, mean_reversion, trend_continuation]
+    blocked_families: [breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: []
+      1d: [trend_continuation]
+    thesis: >
+      PAXG is a gold proxy. Keep it low leverage and avoid crypto-style
+      breakouts; only 1d trend continuation remains active after 4h and
+      intraday lanes failed or lacked sample.
+    risk_filters:
+      - use_low_leverage
+      - reject_major_macro_event_window
+      - require_vwap_reclaim_for_countertrend_entries
+      - require_gold_proxy_liquidity
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  BNBUSDT:
+    route_id: bnb-mean-reversion
+    asset_class: exchange_token_event_risk
+    primary_family: liquidity_reclaim
+    allowed_families: [vwap_reclaim, mean_reversion, liquidity_reclaim]
+    blocked_families: [trend_continuation, breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: [liquidity_reclaim]
+      1d: []
+    thesis: >
+      BNB is ecosystem and exchange-event sensitive. The current MTF smoke run
+      produced no trades, so keep the symbol in the universe but do not allocate
+      active entry research until a different event/range trigger is added.
+    risk_filters:
+      - reject_high_news_risk
+      - require_liquidity_sweep_reclaim_for_event_reversal
+      - require_vwap_reclaim_for_range_entries
+      - require_bb_percent_b_extreme
+      - require_adx_range_condition
+      - active_entry_quarantined_until_new_bnb_edge
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  SOLUSDT:
+    route_id: sol-volatility-breakout
+    asset_class: high_beta_l1
+    primary_family: breakout
+    allowed_families: [breakout, vwap_reclaim, liquidity_reclaim, mean_reversion]
+    blocked_families: [trend_continuation]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: []
+      1d: []
+    thesis: >
+      SOL is high beta and can move violently. The 4h mean reversion lane
+      regressed to 12 trades / 41.67% win / 58.33% pure stop-loss / PF 0.3708
+      after the 2026-05-04 position-state fix, so it is quarantined until a new
+      volatility-flush strategy is implemented.
+    risk_filters:
+      - require_volume_spike_or_jumbo_power
+      - require_sweep_reclaim_before_countertrend_entry
+      - require_vwap_reclaim_after_volatility_flush
+      - reject_low_liquidity_hours
+      - use_wider_atr_stop_than_trx
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  XRPUSDT:
+    route_id: xrp-event-mean-reversion
+    asset_class: event_liquidity_alt
+    primary_family: mean_reversion
+    allowed_families: [vwap_reclaim, mean_reversion, liquidity_reclaim]
+    blocked_families: [trend_continuation, breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h:
+        allowed_families: [mean_reversion]
+        family_sides:
+          mean_reversion: [BUY]
+      1d: []
+    thesis: >
+      XRP is news/regulatory/liquidity driven. Keep only the 4h mean-reversion
+      BUY side active: the 2026-05-04 focused check showed BUY PF 2.4565 while
+      SELL PF 0.2847 dragged the cohort below gate.
+    risk_filters:
+      - reject_high_news_risk
+      - require_liquidity_reclaim_for_event_reversal
+      - require_vwap_reclaim_for_event_reversal
+      - require_range_regime
+      - reject_funding_or_oi_crowding
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15
+
+  LINKUSDT:
+    route_id: link-defensive-research
+    asset_class: oracle_defi_beta
+    primary_family: trend_continuation
+    allowed_families: [vwap_reclaim, trend_continuation, liquidity_reclaim, mean_reversion]
+    blocked_families: [breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: []
+      1d: []
+    thesis: >
+      LINK local 4h continuation was harmful, and the 1h/1d smoke candidates
+      failed the 1500-bar check. Keep LINK inactive until a DeFi/oracle sector
+      confirmation model is added.
+    risk_filters:
+      - require_defi_sector_confirmation
+      - require_vwap_reclaim_for_defi_beta
+      - require_macd_supertrend_alignment
+      - reject_low_volume_breakouts
+      - active_entry_quarantined_after_l1500_failure
+
+  AAVEUSDT:
+    route_id: aave-defi-research
+    asset_class: defi_lending_beta
+    primary_family: trend_continuation
+    allowed_families: [vwap_reclaim, trend_continuation, liquidity_reclaim, mean_reversion]
+    blocked_families: [breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h: []
+      1d: []
+    thesis: >
+      AAVE is DeFi/lending beta and event/liquidity sensitive. The 15m
+      mean-reversion smoke candidate failed the 1500-bar check, so keep AAVE
+      inactive until DeFi sector and protocol-risk filters are implemented.
+    risk_filters:
+      - require_defi_sector_confirmation
+      - require_vwap_reclaim_for_defi_beta
+      - require_volume_confirmation
+      - reject_high_news_risk
+      - active_entry_quarantined_after_l1500_failure
+
+  TRXUSDT:
+    route_id: trx-mean-reversion
+    asset_class: stablecoin_settlement_alt
+    primary_family: mean_reversion
+    allowed_families: [vwap_reclaim, mean_reversion, liquidity_reclaim]
+    blocked_families: [trend_continuation, breakout]
+    execution_lane: paper_research_only
+    intervals:
+      15m: []
+      1h: []
+      4h:
+        allowed_families: [mean_reversion]
+        family_sides:
+          mean_reversion: [SELL]
+      1d: []
+    thesis: >
+      TRX has the strongest current local candidate but only on the 4h
+      mean-reversion SELL side. The 2026-05-04 focused check showed BUY PF
+      0.2699 and SELL PF 1.0134, so BUY catch-knife entries are quarantined
+      while SELL remains research-only.
+    risk_filters:
+      - require_range_regime
+      - require_liquidity_reclaim_for_failed_breakout_entries
+      - require_vwap_reclaim_for_range_entries
+      - require_bb_percent_b_extreme
+      - avoid_low_atr_flat_market
+    promotion:
+      min_trades: 100
+      min_profit_factor: 1.50
+      min_win_rate: 65.0
+      max_stop_loss_ratio: 35.0
+      min_expectancy_r: 0.10
+      min_payoff_ratio: 1.15

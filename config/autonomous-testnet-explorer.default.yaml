@@ -1,0 +1,55 @@
+meta:
+  lane_mode: testnet_explorer
+  description: >
+    Core Binance futures testnet explorer for BTC, ETH, tokenized gold proxies,
+    and liquid majors. It sizes each symbol dynamically and sends only Binance
+    testnet orders when the hard execution checks pass.
+
+strategy:
+  strategy_config: strategy-core-high-win-research.yaml
+
+automation:
+  review_closed_trades: true
+  auto_pause: true
+  review_limit: 20
+  execute_live_entries: false
+  execute_testnet_entries: true
+  execute_position_protection: false
+  force_simulation_after_analysis: true
+  require_digest_action: pre_trade_notify
+  require_strategy_analyzer_approval: false
+  min_strategy_analyzer_confidence: 0.0
+  max_managed_positions: 5
+  allow_new_entries_with_open_positions: true
+  candidate_symbol_source: digest_selected
+  execution_mode: testnet_exploration
+  require_alpha_promotion: true
+  alpha_research_report: ../state/alpha-research-core-high-win-v2/alpha-research-ranking.json
+
+integrations:
+  digest_enabled: true
+  reuse_cached_digest: false
+  digest_min_interval_minutes: 20
+  skip_digest_when_positions_open: true
+  digest_config: n8n-daily-digest.testnet-explorer.json
+  hailo_enabled: true
+  hailo_config: config.yaml
+
+risk:
+  trailing_callback_pct: 0.35
+  margin_notional_usdt: 5.0
+  simulation_notional_usdt: 5.0
+  min_expected_profit_usdt: 0.0
+  require_professional_entry_gate: true
+  min_reward_risk: 1.2
+  min_net_profit_to_risk: 0.35
+  max_fee_profit_ratio: 0.45
+  max_slippage_profit_ratio: 0.35
+  max_volatility: 2.0
+  min_volume_zscore: -0.8
+  min_recent_reviews: 8
+  min_recent_win_rate: 0.42
+  min_recent_avg_r: 0.0
+  max_recent_stop_loss_ratio: 0.45
+  recent_lookback: 20
+  stop_loss_cooldown_hours: 6

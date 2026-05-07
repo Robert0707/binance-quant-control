@@ -1,0 +1,50 @@
+profile: stable-risk-micro
+description: >
+  Stability-first micro-account profile. Caps planned loss at 2.5% of equity,
+  requires stronger trend confirmation, and uses trailing protection after 1R.
+defaults:
+  symbol: NEARUSDT
+  market: futures
+  interval: 1h
+  limit: 500
+  use_blave: false
+  render_chart: true
+risk:
+  max_account_risk_pct: 0.025
+  default_leverage: 6
+  max_leverage: 30
+  max_notional_pct: 0.6
+  max_daily_trades: 8
+  min_balance_usdt: 2.0
+  min_convergence: 0.75
+  min_score_long: 70
+  max_score_short: 30
+  cooldown_hours: 4
+  atr_stop_multiple: 1.5
+  min_adx: 20
+  trailing_stop_enabled: true
+  trailing_activation_r_multiple: 1.0
+  trailing_callback_pct: 0.8
+  take_profit_r_multiples:
+    - 1.5
+    - 3.0
+signal:
+  ema_fast: 13
+  ema_slow: 34
+  rsi_length: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  breakout_length: 20
+execution:
+  order_type: MARKET
+  margin_type: ISOLATED
+  reduce_only_close: true
+  fee_bps: 4.0
+  slippage_bps: 3.0
+challenge:
+  enabled: true
+  target_multiple: 2.0
+  max_drawdown_pct: 18.0
+  pause_on_target: true
+  pause_on_drawdown_breach: true

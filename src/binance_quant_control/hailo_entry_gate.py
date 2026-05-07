@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from typing import Any
+
+HAILO_VETO_LABELS = {
+    "entry_gate_blocked",
+    "profit_floor_failed",
+    "professional_gate_failed",
+    "execution_quality_failed",
+    "market_state_failed",
+    "strategy_performance_failed",
+    "loss_trade",
+    "high_leverage",
+    "low_convergence",
+    "weak_win_rate",
+    "high_event_risk",
+    "needs_root_cause_review",
+}
+
+
+def _response_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    response = payload.get("response")
+    if isinstance(response, dict):
+        return response
+    return payload
+
+
+def _events_from_response(response: dict[str, Any]) -> list[dict[str, Any]]:
+    events = response.get("events")
+    if isinstance(events, list):
+        return [item for item in events if isinstance(item, dict)]
+    output_events = response.get("output_events")
+    if isinstance(output_events, list):
+        return [item for item in output_events if isinstance(item, dict)]
+    return []
+
+
+def evaluate_hailo_entry_gate(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict) or int(payload.get("returncode", 0) or 0) != 0:
+        return {
+            "allowed": False,
+            "decision": "unavailable",
+            "blockers": ["hailo-triage-unavailable"],
+            "reason": "fail_closed_without_hailo_triage",
+            "events": [],
+        }
+
+    response = _response_from_payload(payload)
+    events = _events_from_response(response)
+    blockers: list[str] = []
+    veto_events: list[dict[str, Any]] = []
+    for event in events:
+        labels = [str(item) for item in (event.get("labels") or [])]
+        priority = str(event.get("priority") or "low").lower()
+        event_type = str(event.get("event_type") or "")
+        matched = [label for label in labels if label in HAILO_VETO_LABELS]
+        if priority == "critical" or event_type == "system_error":
+            matched.append(f"priority_{priority}")
+        if not matched:
+            continue
+        veto_events.append(event)
+        for label in matched:
+            blocker = f"hailo-veto:{label}"
+            if blocker not in blockers:
+                blockers.append(blocker)
+
+    return {
+        "allowed": not blockers,
+        "decision": "veto" if blockers else "allow",
+        "blockers": blockers,
+        "reason": "hailo_local_veto" if blockers else "hailo_observability_pass",
+        "events": veto_events,
+        "raw_event_count": response.get("raw_event_count"),
+        "output_event_count": response.get("output_event_count"),
+        "retained_existing_output": response.get("retained_existing_output"),
+    }

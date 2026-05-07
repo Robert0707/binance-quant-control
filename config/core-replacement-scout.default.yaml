@@ -1,0 +1,66 @@
+meta:
+  lane_mode: core_replacement_scout
+  description: >
+    Replacement-symbol scout for the expectancy-first target. BTC, ETH, and
+    XAUT remain anchors; other slots may be replaced only by cohorts that
+    survive fixed-risk expectancy, sample, slippage, and walk-forward gates.
+    Mainnet execution is disabled.
+
+strategy:
+  strategy_config: strategy-core-high-win-research.yaml
+
+universe:
+  include_top_futures_volume: true
+  top_volume_limit: 40
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - XAUTUSDT
+  intervals: [1h, 4h, 1d]
+  limit: 5000
+
+ranking:
+  min_trades: 100
+  min_profit_factor: 1.50
+  min_win_rate: 65.0
+  max_stop_loss_ratio: 35.0
+  min_expectancy_r: 0.10
+  min_payoff_ratio: 1.15
+  target_metrics:
+    win_rate: 65.0
+    max_stop_loss_ratio: 35.0
+    expectancy_r: 0.10
+    payoff_ratio: 1.15
+  walk_forward_folds: 4
+  stress_top_n: 12
+  strategy_families:
+    - trend_continuation
+    - breakout
+    - trend_pullback
+    - liquidity_reclaim
+    - vwap_reclaim
+    - mean_reversion
+  slippage_bps_cases: [3.0, 8.0, 15.0]
+  weights:
+    out_of_sample_total_return: 0.18
+    return_over_drawdown: 0.20
+    profit_factor: 0.30
+    payoff_objective: 0.45
+    trade_count: 0.08
+    slippage_resilience: 0.10
+    walk_forward_stability: 0.14
+
+research_entry_gate:
+  enabled: true
+  route_side_veto: true
+  historical_signal_veto: true
+  route_side_min_samples: 30
+  route_side_min_profit_factor: 0.8
+  route_side_max_stop_loss_ratio: 70.0
+  historical_signal_min_samples: 20
+  historical_signal_min_profit_factor: 0.8
+
+safety:
+  allowed_modes: [backtest, paper, testnet]
+  mainnet_live_allowed: false
+  require_live_readiness_before_any_execution: true

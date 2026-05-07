@@ -1,0 +1,54 @@
+meta:
+  lane_mode: aggressive_alpha_research
+  description: >
+    High-return alpha scanner. This lane is restricted to backtest, paper, and
+    Binance testnet exploration. It must not submit mainnet live orders.
+
+strategy:
+  strategy_config: strategy-aggressive-alpha-research.yaml
+
+universe:
+  include_top_futures_volume: true
+  top_volume_limit: 60
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - XRPUSDT
+    - DOGEUSDT
+    - SUIUSDT
+    - NEARUSDT
+    - LINKUSDT
+    - AAVEUSDT
+  intervals: [1h, 4h]
+  limit: 800
+
+ranking:
+  min_trades: 8
+  min_profit_factor: 1.2
+  min_win_rate: 42.0
+  max_stop_loss_ratio: 55.0
+  walk_forward_folds: 4
+  stress_top_n: 20
+  strategy_families:
+    - trend_continuation
+    - breakout
+    - trend_pullback
+    - liquidity_reclaim
+    - vwap_reclaim
+    - mean_reversion
+  slippage_bps_cases: [3.0, 8.0, 15.0]
+  weights:
+    out_of_sample_total_return: 0.30
+    return_over_drawdown: 0.25
+    profit_factor: 0.18
+    payoff_objective: 0.30
+    trade_count: 0.08
+    slippage_resilience: 0.10
+    walk_forward_stability: 0.09
+
+safety:
+  allowed_modes: [backtest, paper, testnet]
+  mainnet_live_allowed: false
+  require_live_readiness_before_any_execution: true

@@ -1,0 +1,58 @@
+profile: micro-account-pilot
+description: >
+  Conservative quality-entry pilot configuration for Binance futures testnet
+  and guarded live-readiness. It keeps fixed stop-loss risk below the 2.5%
+  ceiling while using staged exits plus a protected runner so entries are
+  judged by net expectancy and payoff, not headline win rate.
+defaults:
+  symbol: NEARUSDT
+  market: futures
+  interval: 4h
+  limit: 500
+  use_blave: false
+  render_chart: true
+risk:
+  max_account_risk_pct: 0.006
+  default_leverage: 6
+  max_leverage: 30
+  max_notional_pct: 0.18
+  max_daily_trades: 3
+  min_balance_usdt: 2.0
+  min_convergence: 0.68
+  min_score_long: 64
+  max_score_short: 36
+  cooldown_hours: 3
+  atr_stop_multiple: 1.45
+  min_adx: 16
+  trailing_stop_enabled: true
+  trailing_activation_r_multiple: 1.2
+  trailing_callback_pct: 0.65
+  exit_profile: payoff_runner
+  take_profit_r_multiples:
+    - 1.2
+    - 2.4
+    - 4.2
+signal:
+  min_convergence: 0.6
+  min_score_long: 60
+  max_score_short: 40
+  ema_fast: 21
+  ema_slow: 55
+  rsi_length: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  breakout_length: 20
+execution:
+  order_type: MARKET
+  margin_type: ISOLATED
+  reduce_only_close: true
+  fee_bps: 4.0
+  slippage_bps: 2.5
+  margin_notional_usdt: 2.0
+challenge:
+  enabled: true
+  target_multiple: 2.0
+  max_drawdown_pct: 8.0
+  pause_on_target: true
+  pause_on_drawdown_breach: true

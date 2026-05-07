@@ -1,0 +1,47 @@
+[project]
+name = "binance-quant-control"
+version = "0.1.0"
+description = "Safe-by-default Binance quant analysis and workflow control plane for OpenClaw"
+readme = "PROJECT.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.28,<1",
+  "matplotlib>=3.9,<4",
+  "numpy>=2.1,<3",
+  "pandas>=2.2,<3",
+  "pydantic>=2.11,<3",
+  "python-dotenv>=1.0,<2",
+  "pyyaml>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit>=4,<5",
+  "pytest>=8,<10",
+  "ruff>=0.11,<0.13",
+]
+
+[project.scripts]
+binance-quant-control = "binance_quant_control.cli:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
+ignore = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

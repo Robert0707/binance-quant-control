@@ -1,0 +1,77 @@
+meta:
+  lane_mode: core_expectancy_research
+  description: >
+    Expectancy-first 10-symbol multi-timeframe research lane. Symbol/interval
+    strategy routing is loaded from the core symbol map so 15m, 1h, 4h, and 1d
+    do not reuse one correlated signal stack. Any promotion still requires
+    fixed-risk positive expectancy, walk-forward robustness, and slippage
+    stress.
+
+strategy:
+  strategy_config: strategy-core-high-win-research.yaml
+
+symbol_strategy_map:
+  enabled: true
+  path: core-symbol-strategy-map.default.yaml
+
+universe:
+  include_top_futures_volume: false
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - XAUTUSDT
+    - PAXGUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - LINKUSDT
+    - AAVEUSDT
+    - TRXUSDT
+  intervals: [15m, 1h, 4h, 1d]
+  limit: 5000
+
+ranking:
+  min_trades: 100
+  min_profit_factor: 1.50
+  min_win_rate: 65.0
+  max_stop_loss_ratio: 35.0
+  min_expectancy_r: 0.10
+  min_payoff_ratio: 1.15
+  target_metrics:
+    win_rate: 65.0
+    max_stop_loss_ratio: 35.0
+    expectancy_r: 0.10
+    payoff_ratio: 1.15
+  walk_forward_folds: 4
+  stress_top_n: 8
+  strategy_families:
+    - trend_continuation
+    - breakout
+    - trend_pullback
+    - liquidity_reclaim
+    - vwap_reclaim
+    - mean_reversion
+  slippage_bps_cases: [3.0, 8.0, 15.0]
+  weights:
+    out_of_sample_total_return: 0.20
+    return_over_drawdown: 0.20
+    profit_factor: 0.28
+    payoff_objective: 0.45
+    trade_count: 0.08
+    slippage_resilience: 0.10
+    walk_forward_stability: 0.14
+
+research_entry_gate:
+  enabled: true
+  route_side_veto: true
+  historical_signal_veto: true
+  route_side_min_samples: 30
+  route_side_min_profit_factor: 0.8
+  route_side_max_stop_loss_ratio: 70.0
+  historical_signal_min_samples: 20
+  historical_signal_min_profit_factor: 0.8
+
+safety:
+  allowed_modes: [backtest, paper, testnet]
+  mainnet_live_allowed: false
+  require_live_readiness_before_any_execution: true

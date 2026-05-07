@@ -1,0 +1,186 @@
+meta:
+  description: >
+    Six-symbol AI router map for expectancy-first market-bot research. Each
+    symbol keeps the same router family but uses a symbol-specific directional
+    profile learned from replayable feature/label diagnostics. This is
+    research-only and does not authorize execution.
+
+defaults:
+  interval: 4h
+  execution_lane: paper_research_only
+  promotion:
+    min_trades: 100
+    min_profit_factor: 1.25
+    min_win_rate: 45.0
+    max_stop_loss_ratio: 55.0
+    min_expectancy_r: 0.05
+    min_payoff_ratio: 1.20
+
+symbols:
+  BTCUSDT:
+    route_id: btc-core
+    asset_class: btc_core
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      4h: [ai_family_router]
+    entry_filters:
+      min_obv_zscore: -0.879
+    thesis: >
+      BTC router trades need OBV support. The replayed 4h diagnostic showed
+      OBV >= -0.879 lifted the router cohort above PF 1.5 while preserving
+      more than 100 trades and turning the tail sample positive.
+    risk_filters:
+      - require_obv_not_distribution
+      - keep_fixed_risk_sizing
+      - reject_until_market_bot_gate_passes
+
+  ETHUSDT:
+    route_id: eth-core
+    asset_class: eth_core
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      4h: [ai_family_router]
+    entry_filters:
+      max_obv_zscore: 1.3163
+      min_signed_di: 5.1712
+      blocked_routed_families: [trend_pullback]
+    strategy_overrides:
+      risk:
+        atr_stop_multiple: 1.70
+        take_profit_r_multiples: [1.4, 3.0, 6.4]
+        trailing_callback_pct: 0.70
+        time_limit_bars: 96
+    thesis: >
+      ETH needs directional DI confirmation, avoids crowded OBV spikes, and
+      should not route weak pullback sub-signals in this profile. Fast
+      prefilter diagnostics showed the wide runner exit and trend-continuation
+      sub-route carry the positive expectancy; full alpha-research must still
+      validate it before any readiness lane.
+    risk_filters:
+      - require_directional_di_confirmation
+      - avoid_crowded_obv_spike
+      - reject_until_market_bot_gate_passes
+
+  BNBUSDT:
+    route_id: bnb-mean-reversion
+    asset_class: exchange_token_event_risk
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      4h: [ai_family_router]
+    entry_filters: {}
+    thesis: >
+      BNB was the first single-cohort gate survivor before global label gating.
+      Keep the original router intact and do not over-filter it with the global
+      AI label veto.
+    risk_filters:
+      - preserve_existing_positive_router_route
+      - reject_high_news_risk
+      - reject_until_market_bot_gate_passes
+
+  SOLUSDT:
+    route_id: sol-volatility-breakout
+    asset_class: high_beta_l1
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      4h: [ai_family_router]
+    entry_filters:
+      min_signed_di: 15.0
+    strategy_overrides:
+      risk:
+        atr_stop_multiple: 1.55
+        take_profit_r_multiples: [1.3, 2.6, 5.2]
+        trailing_callback_pct: 0.55
+        time_limit_bars: 72
+    thesis: >
+      SOL is high beta and only survives when directional DI is strong. The
+      profile trades fewer but cleaner router entries, aiming to fix the OOS
+      tail that killed the broad router.
+    risk_filters:
+      - require_strong_directional_di
+      - avoid_weak_high_beta_chop
+      - reject_until_market_bot_gate_passes
+
+  DOGEUSDT:
+    route_id: doge-meme-high-beta
+    asset_class: meme_high_beta
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      4h: [ai_family_router]
+    entry_filters: {}
+    thesis: >
+      DOGE replaces XRP in the six-symbol market-bot pool because XRP failed
+      OOS and slippage resilience after multiple profile sweeps. DOGE 4h router
+      validated on the full research path with more than 200 trades, positive
+      OOS, PF above 1.25, strong expectancy, and slippage resilience above the
+      market-bot gate. Historical route-side review remains shadow-only and
+      must be monitored before any readiness escalation.
+    risk_filters:
+      - high_beta_meme_symbol_use_smaller_portfolio_weight
+      - monitor_shadow_route_side_history
+      - reject_until_market_bot_gate_passes
+
+  XRPUSDT:
+    route_id: xrp-quarantine
+    asset_class: event_liquidity_alt_quarantine
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: [ai_family_router]
+    execution_lane: quarantined_research_only
+    intervals:
+      4h: []
+    entry_filters:
+      min_volume_zscore: -0.2416
+      min_signed_di: 10.2037
+    thesis: >
+      XRP is kept in the map as a research/quarantine record but removed from
+      the six-symbol trading pool. Current router and trend-only profile sweeps
+      failed OOS, walk-forward, and slippage-resilience gates; it must not be
+      promoted until a fresh family produces full-sample positive expectancy.
+    risk_filters:
+      - quarantined_until_new_alpha_family_passes_market_bot_gate
+      - do_not_replace_gate_with_win_rate_or_manual_override
+
+  TRXUSDT:
+    route_id: trx-mean-reversion
+    asset_class: stablecoin_settlement_alt
+    primary_family: ai_family_router
+    allowed_families: [ai_family_router]
+    blocked_families: []
+    execution_lane: paper_research_only
+    intervals:
+      4h: [ai_family_router]
+    entry_filters:
+      min_obv_zscore: -1.9
+      max_obv_zscore: 1.4
+      blocked_routed_families: [liquidity_reclaim, vwap_reclaim]
+    strategy_overrides:
+      risk:
+        atr_stop_multiple: 1.25
+        take_profit_r_multiples: [1.1, 2.4, 5.2]
+        trailing_callback_pct: 0.50
+        time_limit_bars: 48
+    thesis: >
+      TRX router improves when extreme OBV washout/crowding is removed and the
+      router avoids weak liquidity/vwap reclaim sub-routes. Fast prefilter
+      diagnostics showed trend-continuation and pullback carry the edge, while
+      reclaim sub-routes added repeated losses. The quick runner exit is only
+      promoted after full alpha-research and market-bot-gate validation.
+    risk_filters:
+      - avoid_obv_extremes
+      - keep_settlement_alt_risk_small
+      - reject_until_market_bot_gate_passes

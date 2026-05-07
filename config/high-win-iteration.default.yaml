@@ -1,0 +1,99 @@
+meta:
+  lane_mode: expectancy_research_iteration
+  description: >
+    PID-like research controller for the fixed-risk expectancy gate:
+    100 trades, 65-70% win-rate floor, positive R expectancy, PF >=1.5,
+    payoff ratio >=1.15, and controlled drawdown/loss streak. This file only
+    drives research recommendations and batch commands; it never enables
+    execution.
+
+targets:
+  min_trades: 100
+  min_win_rate: 65.0
+  max_stop_loss_ratio: 35.0
+  min_profit_factor: 1.50
+  min_expectancy_r: 0.10
+  min_payoff_ratio: 1.15
+  max_per_trade_risk_pct: 2.50
+
+portfolio_gate:
+  min_promoted_symbols: 10
+  required_symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - XAUTUSDT
+    - PAXGUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - LINKUSDT
+    - AAVEUSDT
+    - TRXUSDT
+
+reports:
+  alpha_reports:
+    - state/core-10-mainstream-boundary-l1500-smoke/alpha-research-ranking.json
+  sweep_reports: []
+
+pid:
+  state_path: state/high-win-iteration/pid-state.json
+  win_rate_kp: 0.015
+  stop_loss_kp: 0.020
+  profit_factor_kp: 0.080
+  sample_kp: 0.010
+  integral_ki: 0.002
+  derivative_kd: 0.004
+  max_convergence_delta: 0.10
+  max_adx_delta: 8.0
+  max_limit: 10000
+
+convergence:
+  max_rounds: 3
+  default_execute_research: false
+  stop_on_stagnation_rounds: 2
+
+candidate_expansion:
+  enabled: true
+  top_n: 8
+  min_trade_count: 10
+  max_limit: 30000
+
+research_batches:
+  core:
+    enabled: true
+    config: config/core-high-win-research.default.yaml
+  replacement_scout:
+    enabled: true
+    config: config/core-replacement-scout.default.yaml
+  risk_combo_sweep:
+    enabled: true
+    symbols: [PAXGUSDT, ETHUSDT, XRPUSDT, TRXUSDT]
+    limit: 5000
+    grid_mode: focused
+    max_configs: 80
+    max_walk_forward_validations: 12
+    skip_news: true
+    top_n: 20
+
+commands:
+  core_l5000: >
+    openclaw-quantctl alpha-research --config config/core-high-win-research.default.yaml
+    --output-dir state/core-10-high-win-l5000 --compact
+  replacement_scout_l5000: >
+    openclaw-quantctl alpha-research --config config/core-replacement-scout.default.yaml
+    --output-dir state/replacement-scout-expectancy-l5000 --compact
+  strict_risk_combo_sweep: >
+    openclaw-quantctl risk-combo-sweep --symbols PAXGUSDT,ETHUSDT,XRPUSDT,TRXUSDT
+    --limit 5000 --grid-mode focused --min-test-trades 100 --min-win-rate 65
+    --max-stop-loss-ratio 35 --target-profit-factor 1.5 --min-expectancy-r 0.10
+    --min-payoff-ratio 1.15 --max-configs 80 --max-walk-forward-validations 12
+    --skip-news --compact
+  cohort_expansion: >
+    openclaw-quantctl alpha-research --config config/core-high-win-research.default.yaml
+    --symbols {symbols} --intervals {intervals} --limit {limit}
+    --output-dir state/cohort-expansion-high-win-next --compact
+  risk_sweep_symbols:
+    - PAXGUSDT
+    - ETHUSDT
+    - XRPUSDT
+    - TRXUSDT

@@ -1,0 +1,49 @@
+profile: xau-macro
+description: >
+  Tokenized-gold macro lane for XAU research inside a Binance-first stack.
+  Uses trend confirmation plus event-risk filters and remains paper-first until
+  a dedicated metals connector is added.
+defaults:
+  symbol: XAUTUSDT
+  market: futures
+  interval: 4h
+  limit: 500
+  use_blave: false
+  render_chart: true
+risk:
+  max_account_risk_pct: 0.012
+  default_leverage: 4
+  max_leverage: 30
+  max_notional_pct: 0.35
+  max_daily_trades: 8
+  min_balance_usdt: 10.0
+  min_convergence: 0.7
+  min_score_long: 68
+  max_score_short: 32
+  cooldown_hours: 8
+  atr_stop_multiple: 1.7
+  min_adx: 16
+  trailing_stop_enabled: true
+  trailing_activation_r_multiple: 1.0
+  trailing_callback_pct: 0.8
+  take_profit_r_multiples: [1.5, 2.4, 3.4]
+signal:
+  ema_fast: 20
+  ema_slow: 50
+  rsi_length: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  breakout_length: 20
+execution:
+  order_type: MARKET
+  margin_type: ISOLATED
+  reduce_only_close: true
+  fee_bps: 4.0
+  slippage_bps: 2.0
+challenge:
+  enabled: false
+  target_multiple: 1.5
+  max_drawdown_pct: 9.0
+  pause_on_target: true
+  pause_on_drawdown_breach: true

@@ -1,0 +1,48 @@
+profile: major-alt-trend
+description: >
+  Shared large-alt trend lane for majors outside BTC and ETH. Stronger than the
+  stable baseline, but still paper-first until reviews converge.
+defaults:
+  symbol: NEARUSDT
+  market: futures
+  interval: 4h
+  limit: 500
+  use_blave: false
+  render_chart: true
+risk:
+  max_account_risk_pct: 0.014
+  default_leverage: 6
+  max_leverage: 30
+  max_notional_pct: 0.42
+  max_daily_trades: 8
+  min_balance_usdt: 3.0
+  min_convergence: 0.56
+  min_score_long: 54
+  max_score_short: 46
+  cooldown_hours: 1
+  atr_stop_multiple: 1.45
+  min_adx: 10
+  trailing_stop_enabled: true
+  trailing_activation_r_multiple: 1.0
+  trailing_callback_pct: 0.7
+  take_profit_r_multiples: [1.4, 2.5, 3.6]
+signal:
+  ema_fast: 13
+  ema_slow: 34
+  rsi_length: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  breakout_length: 20
+execution:
+  order_type: MARKET
+  margin_type: ISOLATED
+  reduce_only_close: true
+  fee_bps: 4.0
+  slippage_bps: 3.0
+challenge:
+  enabled: true
+  target_multiple: 2.0
+  max_drawdown_pct: 15.0
+  pause_on_target: true
+  pause_on_drawdown_breach: true

@@ -1,0 +1,62 @@
+meta:
+  description: >
+    Public strategy baselines used as starting templates before local
+    convergence, paper validation, and route-specific tuning.
+  policy: >
+    These are not treated as guaranteed highest-return systems. They are
+    widely-documented base templates chosen for robustness, interpretability,
+    and fit with this repo's existing control plane.
+
+baselines:
+  btc-trend-breakout:
+    title: BTC trend-following breakout
+    applies_to_routes: [btc-core]
+    strategy_family: trend_following
+    thesis: >
+      BTC responds well to trend persistence plus breakout confirmation, so the
+      base template uses EMA trend alignment, ADX confirmation, breakout level
+      checks, and staged profit-taking.
+    local_template: strategy-btc-volatility.yaml
+    source_notes:
+      - Binance Academy explains moving-average trend workflows as core crypto trend tools.
+      - Academic trend-following evidence remains one of the most persistent cross-asset edges.
+    official_sources:
+      - title: Binance Academy - Trading Strategies with Moving Averages
+        url: https://academy.binance.com/en/articles/trading-strategies-with-moving-averages
+      - title: AQR - A Century of Evidence on Trend-Following Investing
+        url: https://www.aqr.com/Insights/Research/White-Papers/A-Century-of-Evidence-on-Trend-Following-Investing
+
+  eth-ema-macd-continuation:
+    title: ETH EMA plus MACD continuation
+    applies_to_routes: [eth-core]
+    strategy_family: trend_continuation
+    thesis: >
+      ETH tends to reward cleaner continuation entries than BTC. The base lane
+      combines EMA structure, MACD momentum, ADX, and staged trailing.
+    local_template: strategy-eth-trend.yaml
+    source_notes:
+      - Binance Academy documents moving-average and MACD-driven continuation methods as common crypto workflows.
+      - The local lane adds stricter risk and convergence gates on top.
+    official_sources:
+      - title: Binance Academy - Trading Strategies with Moving Averages
+        url: https://academy.binance.com/en/articles/trading-strategies-with-moving-averages
+      - title: Binance Academy - MACD Indicator Explained
+        url: https://academy.binance.com/en/articles/macd-indicator-explained
+
+  xau-macro-breakout:
+    title: XAU macro trend plus breakout filter
+    applies_to_routes: [xau-macro]
+    strategy_family: macro_breakout
+    thesis: >
+      Gold is more event-led than meme or alt coins, so the base lane uses
+      macro/news risk filters first, then EMA trend and breakout confirmation.
+      In this repo it is represented by tokenized-gold proxies only.
+    local_template: strategy-xau-macro.yaml
+    source_notes:
+      - IG's gold education emphasizes macro drivers, breakout behavior, and trend confirmation.
+      - This repo keeps the lane paper-first because native XAU execution is outside the current Binance core.
+    official_sources:
+      - title: IG - How to trade gold
+        url: https://www.ig.com/en/trading-strategies/how-to-trade-gold-200601
+      - title: AQR - A Century of Evidence on Trend-Following Investing
+        url: https://www.aqr.com/Insights/Research/White-Papers/A-Century-of-Evidence-on-Trend-Following-Investing

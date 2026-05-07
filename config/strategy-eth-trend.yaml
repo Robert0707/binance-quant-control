@@ -1,0 +1,48 @@
+profile: eth-trend
+description: >
+  ETH continuation lane. Prefers cleaner trend persistence and moderate
+  trailing so trend trades can breathe while still respecting risk caps.
+defaults:
+  symbol: ETHUSDT
+  market: futures
+  interval: 4h
+  limit: 500
+  use_blave: false
+  render_chart: true
+risk:
+  max_account_risk_pct: 0.018
+  default_leverage: 8
+  max_leverage: 30
+  max_notional_pct: 0.5
+  max_daily_trades: 8
+  min_balance_usdt: 5.0
+  min_convergence: 0.6
+  min_score_long: 56
+  max_score_short: 44
+  cooldown_hours: 1
+  atr_stop_multiple: 1.5
+  min_adx: 12
+  trailing_stop_enabled: true
+  trailing_activation_r_multiple: 1.0
+  trailing_callback_pct: 0.75
+  take_profit_r_multiples: [1.5, 2.6, 3.8]
+signal:
+  ema_fast: 13
+  ema_slow: 34
+  rsi_length: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  breakout_length: 20
+execution:
+  order_type: MARKET
+  margin_type: ISOLATED
+  reduce_only_close: true
+  fee_bps: 4.0
+  slippage_bps: 2.0
+challenge:
+  enabled: true
+  target_multiple: 2.0
+  max_drawdown_pct: 14.0
+  pause_on_target: true
+  pause_on_drawdown_breach: true

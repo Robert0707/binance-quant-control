@@ -1,0 +1,94 @@
+meta:
+  lane_mode: market_bot_six_symbol_expectancy_discovery
+  description: >
+    Research-only six-symbol AI-trader discovery lane. This intentionally
+    starts with liquid core/major symbols, widens strategy families, and ranks
+    by fixed-risk expectancy plus payoff. It never opens orders; every survivor
+    still needs market-bot-gate, Hermes AI Trader, portfolio risk, and
+    live-readiness.
+
+strategy:
+  strategy_config: strategy-market-bot-payoff-research.yaml
+
+symbol_strategy_map:
+  enabled: true
+  path: market-bot-six-symbol-router-map.default.yaml
+
+universe:
+  include_top_futures_volume: false
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - TRXUSDT
+    - DOGEUSDT
+  intervals: [1h, 4h]
+  limit: 8000
+
+ranking:
+  min_trades: 100
+  min_profit_factor: 1.25
+  min_win_rate: 45.0
+  max_stop_loss_ratio: 55.0
+  min_expectancy_r: 0.05
+  min_payoff_ratio: 1.20
+  enforce_win_rate_gate: false
+  target_metrics:
+    win_rate: 45.0
+    max_stop_loss_ratio: 55.0
+    expectancy_r: 0.05
+    payoff_ratio: 1.20
+  walk_forward_folds: 4
+  stress_top_n: 12
+  strategy_families:
+    - ai_family_router
+    - trend_continuation
+    - breakout
+    - trend_pullback
+    - liquidity_reclaim
+    - vwap_reclaim
+    - mean_reversion
+  slippage_bps_cases: [3.0, 8.0, 15.0]
+  weights:
+    out_of_sample_total_return: 0.16
+    return_over_drawdown: 0.18
+    profit_factor: 0.24
+    payoff_objective: 0.56
+    trade_count: 0.10
+    slippage_resilience: 0.14
+    walk_forward_stability: 0.16
+
+research_entry_gate:
+  enabled: true
+  route_side_veto: false
+  historical_signal_veto: false
+  shadow_route_side_veto: true
+  shadow_historical_signal_veto: true
+  route_side_min_samples: 30
+  route_side_min_profit_factor: 0.8
+  route_side_max_stop_loss_ratio: 70.0
+  historical_signal_min_samples: 20
+  historical_signal_min_profit_factor: 0.8
+
+feature_label_gate:
+  enabled: true
+  dataset_path: state/market-bot-six-symbol-feature-dataset-4h-l6000-v3/feature-dataset.jsonl
+  min_samples: 30
+  max_history_rows: 1200
+  min_expectancy_r: 0.02
+  min_profit_factor: 1.05
+  min_payoff_ratio: 0.75
+  max_stop_loss_ratio: 70.0
+  allow_if_insufficient_samples: false
+  use_ml_meta_features: true
+
+safety:
+  allowed_modes: [backtest, paper, testnet]
+  mainnet_live_allowed: false
+  require_market_bot_gate_before_readiness: true
+  require_live_readiness_before_any_execution: true
+
+targets:
+  min_correlation_groups: 3
+  min_beta_groups: 3

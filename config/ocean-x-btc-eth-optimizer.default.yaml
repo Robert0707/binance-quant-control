@@ -1,0 +1,131 @@
+meta:
+  lane_mode: btc_eth_expectancy_convergence_optimizer
+  description: >
+    Research-only optimizer for transparent BTC/ETH TradingView-inspired
+    convergence strategies. It started from the Ocean-X / whale-jump proxy,
+    then adds public TradingView concept families such as Supertrend+MACD,
+    StochRSI pullback, VWAP trend, range RSI, and Banker Fund Flow proxy.
+    The finished gate is expectancy-first, not 80%-win-rate-first. This file is
+    not used by live execution and must not enable orders.
+
+safety:
+  mainnet_live_allowed: false
+  writes_execution_config: false
+  opens_orders: false
+  research_gate_only: true
+
+data:
+  symbols: [BTCUSDT, ETHUSDT]
+  market: futures
+  interval: 1h
+  start: "2024-05-03"
+  end: "2026-05-03"
+
+targets:
+  gate_mode: expectancy
+  target_win_rate: 45.0
+  min_train_trades: 70
+  min_test_trades: 30
+  min_profit_factor: 1.20
+  min_expectancy_pct: 0.03
+  min_payoff_ratio: 1.20
+  max_drawdown_pct: 20.0
+  max_loss_streak: 8
+  max_stop_loss_ratio: 55.0
+  max_per_trade_risk_pct: 2.50
+  min_dataset_bars: 1000
+  min_coverage_ratio: 0.65
+
+runner:
+  script: scripts/research_ocean_x_btc_evidence.py
+  command: >
+    python3 scripts/research_ocean_x_btc_evidence.py --optimize-btc-eth-tradingview
+    --symbols BTCUSDT,ETHUSDT --start 2024-05-03 --end 2026-05-03
+    --interval 1h --gate-mode expectancy --target-win-rate 45
+    --min-train-trades 70 --min-test-trades 30 --min-profit-factor 1.2
+    --min-expectancy-pct 0.03 --min-payoff-ratio 1.2
+    --max-drawdown-pct 20 --max-loss-streak 8 --max-stop-loss-ratio 55
+    --max-per-trade-risk-pct 2.5
+    --regime-filters none,trend,pullback,liquidity,range,strong_flow
+    --max-full-evaluations 0
+
+latest_reports:
+  baseline_sample_sweep: reports/20260503T124854Z-btc-eth-ocean-x-optimizer/optimizer_summary.json
+  uniform_space_sweep: reports/20260503T171144Z-btc-eth-ocean-x-optimizer/optimizer_summary.json
+  core_whale_jump_standard: reports/20260504T-core-whale-jump-standard/optimizer_summary.json
+  btc_eth_tradingview_convergence: reports/20260504T-btc-eth-tradingview-convergence/optimizer_summary.json
+  btc_eth_tradingview_convergence_full: reports/20260504T-btc-eth-tradingview-convergence-full/optimizer_summary.json
+  btc_eth_expectancy_1h_full: reports/20260504T-btc-eth-tradingview-expectancy-rr-1h-full/optimizer_summary.json
+  btc_eth_expectancy_30m_full: reports/20260504T-btc-eth-tradingview-expectancy-30m-full/optimizer_summary.json
+
+current_findings:
+  status: no_live_candidate
+  final_gate_status:
+    gate_mode: expectancy
+    hard_win_rate_gate_removed: true
+    promotion_allowed: false
+    reason: current_public_data_candidates_still_fail_sample_payoff_or_walk_forward_expectancy
+  tradingview_convergence:
+    candidate_count: 0
+    mature_candidate_count: 0
+    pre_screen_passed: 552
+    full_gate_evaluations: 552
+    best_sample_btc:
+      symbol: BTCUSDT
+      family: tv_vwap_trend
+      signal: L
+      test_win_rate: 73.33
+      test_trades: 30
+      test_profit_factor: 1.5842
+      test_stop_loss_ratio: 26.67
+      reason_not_promoted: below_train_win_rate_test_win_rate_and_stop_loss_ratio_gates
+    best_sample_eth:
+      symbol: ETHUSDT
+      family: tv_supertrend_macd
+      signal: S
+      test_win_rate: 71.08
+      test_trades: 83
+      test_profit_factor: 1.5853
+      test_stop_loss_ratio: 26.51
+      reason_not_promoted: below_win_rate_and_stop_loss_ratio_gates
+    high_win_low_sample_btc:
+      symbol: BTCUSDT
+      family: tv_supertrend_macd
+      signal: S
+      test_win_rate: 82.35
+      test_trades: 17
+      test_profit_factor: 2.8681
+      test_stop_loss_ratio: 17.65
+      reason_not_promoted: test_trade_count_below_30_and_train_trade_count_below_70
+  best_sample_btc:
+    symbol: BTCUSDT
+    signal: S
+    test_win_rate: 85.71
+    test_trades: 7
+    train_win_rate: 50.0
+    walk_forward_mean_win_rate: 56.6
+    reason_not_promoted: unstable_train_and_walk_forward
+  best_sample_eth:
+    symbol: ETHUSDT
+    signal: L
+    test_win_rate: 77.78
+    test_trades: 27
+    train_win_rate: 65.0
+    walk_forward_mean_win_rate: 68.09
+    reason_not_promoted: below_80_and_unstable_train_walk_forward
+  xaut_data_note:
+    symbol: XAUTUSDT
+    status: insufficient_history
+    first_public_1h_bar_seen_locally: "2026-03-26T14:00:00+00:00"
+    reason_not_promoted: not_enough_history_for_standard_train_test_walk_forward_sample
+
+next_iteration:
+  priority: expectancy_first_paper_candidate_generation
+  ideas:
+    - Continue BTC/ETH only; XAUT is out of this focused lane.
+    - Treat win rate as descriptive only; do not use 80 percent as a hard gate.
+    - Promote only positive net expectancy with adequate sample, PF, payoff, drawdown, loss-streak, and walk-forward stability.
+    - Run 15m or 30m as a background job if more sample is needed.
+    - Improve payoff structure before adding more entry filters.
+    - Add fee/slippage stress after any candidate passes train, test, and walk-forward.
+    - Keep the 2.5 percent per-trade risk ceiling if this graduates from research.

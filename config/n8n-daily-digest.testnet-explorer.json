@@ -1,0 +1,37 @@
+{
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "XAUTUSDT",
+    "PAXGUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "LINKUSDT",
+    "TRXUSDT",
+    "AAVEUSDT"
+  ],
+  "include_top_futures_volume": false,
+  "top_futures_volume_limit": 10,
+  "analysis_limit": 10,
+  "market": "futures",
+  "interval": "4h",
+  "news_feeds": [
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://cointelegraph.com/rss",
+    "https://decrypt.co/feed"
+  ],
+  "news_limit": 18,
+  "whale_min_value_usd": 500000,
+  "whale_limit": 10,
+  "github_observability_repos": [
+    "ccxt/ccxt",
+    "bmoscon/cryptofeed",
+    "freqtrade/freqtrade",
+    "hummingbot/hummingbot",
+    "jesse-ai/jesse",
+    "polakowo/vectorbt"
+  ],
+  "digest_root": "/home/robert/python/projects/binance-quant-control/state/n8n-digests",
+  "strategy_analyzer_url": "http://127.0.0.1:8799/analyze"
+}

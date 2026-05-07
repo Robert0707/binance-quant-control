@@ -1,0 +1,354 @@
+meta:
+  description: >
+    Professional trading-system blueprint distilled from TradingAgents,
+    Lumibot, OctoBot, intelligent-trading-bot, AI-Trader, QuantConnect,
+    NautilusTrader, Hummingbot, Freqtrade, and Binance exchange rules.
+  status: six_symbol_market_bot_gate
+  last_reviewed: 2026-05-04
+  license_boundary: >
+    Use external projects as architectural references only. Do not copy GPL or
+    unknown-license source code into this repository.
+  references:
+    TradingAgents: multi-agent analyst/researcher/trader/risk/portfolio review
+    Lumibot: same-strategy backtest/live parity through broker and data abstractions
+    OctoBot: crypto product workflow with exchange adapters, UI, paper/live, backtest, optimizer
+    intelligent_trading_bot: offline/online feature and model parity
+    AI_Trader: agent skills, OpenAPI signal layer, copy/signal synchronization
+    QuantConnect: universe, alpha, portfolio construction, execution, risk modules
+    NautilusTrader: pre-trade risk engine and order-denial boundary
+    Hummingbot: triple-barrier stop, take-profit, time-limit, trailing executor
+    Freqtrade: pairlist filters and protections such as cooldown, stoploss guard, max drawdown
+    Binance: exchangeInfo filters for price, quantity, percent price, and notional rules
+
+promotion_gate:
+  min_trades_per_symbol_family: 100
+  min_profit_factor: 1.25
+  min_expectancy_r: 0.05
+  min_payoff_ratio: 1.20
+  screening_win_rate_floor: 45.0
+  validation_win_rate_preference: 65.0
+  max_pure_stop_loss_ratio: 55.0
+  min_accepted_symbols: 6
+  min_promoted_symbols: 6
+  partial_layers_block_trade: false
+  require_positive_oos: true
+  require_walk_forward_robustness: true
+  require_slippage_stress_positive: true
+
+evidence:
+  latest_alpha_report: state/market-bot-six-symbol-router-profile-4h-l6000-v4-doge-pool/alpha-research-ranking.json
+  latest_market_bot_gate: state/market-bot-six-symbol-router-profile-4h-gate-l6000-v7-current/20260504T221145832580Z-market-bot-gate.json
+
+target_workflow:
+  - id: universe
+    output: tradeable symbols ranked by liquidity, age, volatility, spread, funding, event risk
+  - id: data
+    output: point-in-time candles, quote/spread, fees, exchange filters, optional news/whale context
+  - id: features
+    output: reusable feature rows with offline/online parity and no lookahead
+  - id: labels
+    output: triple-barrier labels and R-multiple outcomes for supervised validation
+  - id: alpha
+    output: family-specific signals, not duplicate indicator voting
+  - id: portfolio
+    output: position targets with correlation, route, side, and risk-budget constraints
+  - id: pre_trade_risk
+    output: allow/deny decision before order creation
+  - id: execution
+    output: broker/exchange adapter plan with realistic cost and fill assumptions
+  - id: protection
+    output: stop-loss, staged take-profit, runner/trailing, and time stop at entry
+  - id: monitoring
+    output: skipped-signal, fill-quality, PnL, expectancy, drawdown, and gate reports
+  - id: review
+    output: structured bull/bear/risk/portfolio review before promotion
+  - id: promotion
+    output: paper -> testnet -> small live only after evidence and risk gates pass
+
+layers:
+  - id: universe_selection
+    name: Universe and Coin Discovery
+    critical: true
+    trade_required: true
+    status_if_present: ready
+    model_references: [QuantConnect, Freqtrade, OctoBot]
+    required_paths:
+      - src/binance_quant_control/candidate_universe.py
+      - src/binance_quant_control/asset_routing.py
+      - config/asset-routing.default.yaml
+    optional_paths:
+      - src/binance_quant_control/symbol_strategy_map.py
+      - config/core-symbol-strategy-map.default.yaml
+    keep:
+      - candidate universe scanning
+      - asset routing and symbol strategy map
+    refactor:
+      - add ranked liquidity/spread/funding/event score to the same output
+    known_gaps:
+      - pairlist-style volatility/spread/age filters are not yet one unified gate
+    next_action: unify universe score before alpha scan
+
+  - id: data_ingestion
+    name: Market Data and Context
+    critical: true
+    trade_required: true
+    status_if_present: partial
+    model_references: [Lumibot, OctoBot, intelligent_trading_bot]
+    required_paths:
+      - src/binance_quant_control/binance_api.py
+      - src/binance_quant_control/historical_klines.py
+      - src/binance_quant_control/external_context.py
+    optional_paths:
+      - src/binance_quant_control/market_context.py
+      - src/binance_quant_control/trading_domain.py
+      - config/external-context.default.yaml
+    keep:
+      - Binance public/private wrapper
+      - historical klines downloader
+      - optional external context cache
+    refactor:
+      - split Binance data access from broker execution
+      - persist spread, fee, funding, and exchange-filter snapshots beside candles
+    known_gaps:
+      - no first-class quote/orderbook data quality contract
+    next_action: create data source contract before adding more indicators
+
+  - id: feature_label_pipeline
+    name: Feature, Label, and Model Registry
+    critical: true
+    trade_required: true
+    status_if_present: partial
+    model_references: [intelligent_trading_bot, Lumibot]
+    required_paths:
+      - src/binance_quant_control/indicators.py
+      - src/binance_quant_control/feature_registry.py
+      - src/binance_quant_control/vwap_features.py
+      - src/binance_quant_control/volume_structure.py
+    optional_paths:
+      - src/binance_quant_control/public_history_training.py
+      - src/binance_quant_control/historical_signal_risk.py
+    keep:
+      - indicator enrichment modules
+      - public-history review importer
+    refactor:
+      - inject manifest hash into every alpha and backtest report
+      - build reusable feature-matrix artifacts for model training
+    known_gaps:
+      - manifest exists but no drift or leakage report per feature set
+    next_action: implement feature manifest and label registry
+
+  - id: alpha_family_research
+    name: Alpha Family Research
+    critical: true
+    trade_required: true
+    status_if_present: ready
+    model_references: [QuantConnect, TradingAgents, intelligent_trading_bot]
+    required_paths:
+      - src/binance_quant_control/alpha_families.py
+      - src/binance_quant_control/alpha_research.py
+      - src/binance_quant_control/research_entry_gate.py
+    optional_paths:
+      - config/core-high-win-research.default.yaml
+      - config/core-alpha-research.default.yaml
+    keep:
+      - independent strategy-family scoring
+      - mapped symbol/family research lane
+    refactor:
+      - avoid broad all-family scans unless replacement-scout mode is explicit
+    known_gaps:
+      - current evidence still has no promotion-eligible cohort
+    next_action: rebuild edge at family level, not by loosening execution gates
+
+  - id: backtest_walk_forward
+    name: Backtest, Walk-Forward, and Slippage Stress
+    critical: true
+    trade_required: true
+    status_if_present: partial
+    model_references: [Lumibot, OctoBot, Hummingbot]
+    required_paths:
+      - src/binance_quant_control/backtest.py
+      - src/binance_quant_control/high_win_iteration.py
+      - src/binance_quant_control/high_win_convergence.py
+    optional_paths:
+      - src/binance_quant_control/risk_combo_sweep.py
+    keep:
+      - staged TP and runner-aware backtest semantics
+      - bounded convergence controller
+    refactor:
+      - make realistic fee/spread/slippage/fill assumptions mandatory in every report
+    known_gaps:
+      - no single broker-neutral event replay engine
+      - no full fill-quality calibration loop from live/testnet fills
+    next_action: require cost model evidence in promotion gate
+
+  - id: portfolio_construction
+    name: Portfolio Construction
+    critical: true
+    trade_required: true
+    status_if_present: partial
+    model_references: [QuantConnect, AI_Trader, NautilusTrader]
+    required_paths:
+      - src/binance_quant_control/portfolio_construction.py
+    optional_paths:
+      - src/binance_quant_control/symbol_sizing.py
+      - src/binance_quant_control/route_risk_control.py
+    keep:
+      - portfolio target and risk cap skeleton
+      - symbol sizing helpers
+      - route-side quarantine state
+    refactor:
+      - wire portfolio risk snapshot into live-readiness and execution plan
+      - enforce correlation and same-direction exposure caps across the core 10
+    known_gaps:
+      - portfolio target exists but is not yet enforced inside live execution
+    next_action: wire portfolio target engine into live-readiness before multi-coin promotion
+
+  - id: pre_trade_risk
+    name: Pre-Trade Risk Engine
+    critical: true
+    trade_required: true
+    status_if_present: ready
+    model_references: [NautilusTrader, Binance, Freqtrade]
+    required_paths:
+      - src/binance_quant_control/professional_entry_gate.py
+      - src/binance_quant_control/risk_guard.py
+      - src/binance_quant_control/trading_control.py
+      - config/mainstream-risk-boundaries.default.yaml
+    optional_paths:
+      - src/binance_quant_control/side_risk_policy.py
+    keep:
+      - expectancy-first professional entry gate
+      - kill-switch and route-side risk blocks
+    refactor:
+      - expose exchange filter denial reasons as first-class skipped-signal records
+    known_gaps:
+      - risk engine is still embedded in Binance execution path
+    next_action: keep this gate hard while moving it behind a broker-neutral interface
+
+  - id: execution_adapter
+    name: Execution Adapter and Order Lifecycle
+    critical: true
+    trade_required: true
+    status_if_present: partial
+    model_references: [Lumibot, NautilusTrader, OctoBot]
+    required_paths:
+      - src/binance_quant_control/live_execution.py
+      - src/binance_quant_control/binance_api.py
+    optional_paths:
+      - src/binance_quant_control/trading_domain.py
+      - src/binance_quant_control/position_manager.py
+      - src/binance_quant_control/protective_repair.py
+    keep:
+      - broker-neutral OrderIntent, FillEvent, and PositionSnapshot skeleton
+      - live-readiness dry-run plan
+      - Binance protective-order repair
+    refactor:
+      - wire Broker, OrderSnapshot, FillEvent, and PositionSnapshot into live execution
+      - add skipped-signal and order-denial log for every blocked entry
+    known_gaps:
+      - broker domain objects exist but are not yet wired into live execution
+      - same strategy cannot yet run unchanged across backtest/testnet/live broker adapters
+    next_action: connect broker-neutral order domain to readiness and execution adapters
+
+  - id: position_protection
+    name: Position Protection and Triple Barrier
+    critical: true
+    trade_required: true
+    status_if_present: ready
+    model_references: [Hummingbot, Freqtrade]
+    required_paths:
+      - src/binance_quant_control/exit_profiles.py
+      - src/binance_quant_control/position_manager.py
+      - src/binance_quant_control/protective_repair.py
+    optional_paths:
+      - docs/runbooks/stoploss-takeprofit-policy.md
+    keep:
+      - stop-loss at entry
+      - staged take-profit and runner semantics
+      - protective repair command
+    refactor:
+      - make time-stop evidence visible in every backtest report
+    known_gaps:
+      - live fill feedback is not yet used to recalibrate exit costs
+    next_action: add fill-quality feedback to exit profile review
+
+  - id: monitoring_feedback
+    name: Monitoring, Journal, and Feedback Loop
+    critical: true
+    trade_required: true
+    status_if_present: ready
+    model_references: [OctoBot, AI_Trader, Freqtrade]
+    required_paths:
+      - src/binance_quant_control/order_journal.py
+      - src/binance_quant_control/operator_dashboard.py
+      - src/binance_quant_control/loss_diagnostics.py
+    optional_paths:
+      - src/binance_quant_control/skipped_signal_journal.py
+      - src/binance_quant_control/supervision.py
+      - src/binance_quant_control/daily_digest.py
+    keep:
+      - closed-trade reviews with PF, expectancy, and stop ratios
+      - operator dashboard
+      - delivery supervisor
+    refactor:
+      - add skipped-signal ledger for non-trades and denied orders
+    known_gaps:
+      - skipped-signal ledger exists but is not yet wired into every gate denial
+      - no full signal-to-order-to-fill latency and slippage report
+    next_action: record every rejected signal with gate reason
+
+  - id: agent_review_committee
+    name: Agent Review Committee
+    critical: false
+    trade_required: false
+    status_if_present: ready
+    model_references: [TradingAgents, AI_Trader]
+    required_paths:
+      - src/binance_quant_control/trading_committee.py
+    optional_paths:
+      - docs/workflows/github-inspired-trading-doctrine.md
+    keep:
+      - senior-trader doctrine documentation
+    refactor:
+      - persist committee review beside every promotion candidate
+    known_gaps:
+      - committee exists but is not yet connected to a real multi-agent LLM debate service
+    next_action: add structured review report after portfolio engine exists
+
+  - id: api_signal_layer
+    name: API and Signal Layer
+    critical: false
+    trade_required: false
+    status_if_present: ready
+    model_references: [AI_Trader, OctoBot]
+    required_paths:
+      - src/binance_quant_control/signal_schema.py
+      - src/binance_quant_control/signal_api.py
+    optional_paths:
+      - docs/workflows/human-intent-to-robot-actions.md
+    keep:
+      - operator intent router
+    refactor:
+      - add OpenAPI/dashboard transport only after core trading evidence is positive
+    known_gaps:
+      - local signal ledger exists; no public OpenAPI or copy-trading surface yet
+    next_action: defer until strategy has positive live/testnet evidence
+
+  - id: event_plugin_lifecycle
+    name: Event Bus and Plugin Lifecycle
+    critical: false
+    trade_required: false
+    status_if_present: ready
+    model_references: [OctoBot, NautilusTrader]
+    required_paths:
+      - src/binance_quant_control/event_bus.py
+    optional_paths:
+      - src/binance_quant_control/autonomy.py
+      - src/binance_quant_control/mission_control.py
+    keep:
+      - bounded workflow controllers
+    refactor:
+      - persist events for replay once live/testnet signal flow is positive
+    known_gaps:
+      - in-memory event bus exists; no durable event replay service yet
+    next_action: keep commands modular while preparing durable event replay

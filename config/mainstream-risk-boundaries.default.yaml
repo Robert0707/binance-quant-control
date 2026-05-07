@@ -1,0 +1,82 @@
+meta:
+  description: >
+    Mainstream trading-bot risk boundary baseline distilled from Binance
+    futures rules, Freqtrade protections, Hummingbot triple-barrier/kill-switch
+    practice, QuantConnect risk models, NautilusTrader pre-trade risk concepts,
+    and local Binance Quant Control loss diagnostics.
+  status: research_gate_only
+  last_reviewed: 2026-05-04
+
+exchange_boundaries:
+  enforce_exchange_info_filters: true
+  required_filters:
+    - PRICE_FILTER
+    - LOT_SIZE
+    - MIN_NOTIONAL
+    - PERCENT_PRICE
+  order_policy:
+    reduce_only_close: true
+    isolated_margin_only: true
+    reject_if_min_notional_conflicts_with_risk_size: true
+    reject_if_spread_bps_above: 12.0
+
+position_boundaries:
+  max_account_risk_pct_per_trade: 0.006
+  absolute_live_ceiling_pct_per_trade: 0.025
+  default_leverage: 2
+  max_leverage: 4
+  max_notional_pct: 0.12
+  max_concurrent_positions: 4
+  max_daily_entries: 4
+  reject_new_entry_when_existing_symbol_position: true
+
+entry_boundaries:
+  min_trades_for_promotion: 100
+  min_win_rate: 65.0
+  validation_win_rate: 70.0
+  max_pure_stop_loss_ratio: 35.0
+  min_profit_factor: 1.50
+  min_expectancy_r: 0.10
+  min_payoff_ratio: 1.15
+  elite_win_rate_target: 80.0
+  require_positive_out_of_sample_return: true
+  require_walk_forward_robustness: true
+  require_slippage_stress_positive: true
+  require_independent_strategy_family: true
+  reject_duplicate_indicator_votes: true
+
+exit_boundaries:
+  model: triple_barrier
+  require_stop_loss_at_entry: true
+  take_profit_r_multiples: [0.6, 1.2, 2.2]
+  move_stop_after_tp1: breakeven_or_fee_buffer
+  trailing_stop_after_tp: true
+  max_time_in_trade_bars:
+    15m: 96
+    1h: 72
+    4h: 48
+    1d: 20
+
+protective_circuit_breakers:
+  route_side_min_samples: 30
+  quarantine_route_side_when_pf_below: 0.80
+  stop_loss_guard_recent_ratio_ceiling: 45.0
+  stop_loss_guard_cooldown_hours: 6.0
+  max_loss_streak_before_pause: 3
+  daily_drawdown_pause_pct: 3.0
+  challenge_drawdown_stop_pct: 20.0
+  kill_switch_if_protective_orders_missing: true
+  kill_switch_if_live_auth_or_exchange_state_unknown: true
+
+market_context_vetoes:
+  high_news_risk: true
+  whale_or_external_context_opposes_entry: true
+  funding_oi_crowding_against_entry: true
+  low_liquidity_or_wide_spread: true
+  liquidity_sweep_without_reclaim: true
+
+research_priorities:
+  - liquidity_reclaim
+  - btc_regime_filter_for_eth
+  - gold_proxy_macro_event_filter_for_xaut_paxg
+  - per_symbol_slippage_fee_calibration

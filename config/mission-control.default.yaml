@@ -1,0 +1,36 @@
+meta:
+  description: >
+    One-command mission control for symbol-scoped strategy convergence. Local
+    programs do most work; cloud review is reserved for final approval.
+
+execution:
+  paper_order_notional_usdt: 3.0
+  min_candidate_composite_score: 55.0
+  select_best_symbol_only: true
+  max_symbols_per_run: 6
+  force_simulation_after_analysis: true
+  require_backtest_screening_pass: true
+  run_optimizer_after_mission: true
+  run_review_after_mission: true
+
+scheduling:
+  scout_interval_minutes: 30
+  guardian_interval_minutes: 5
+  digest_interval_minutes: 240
+  optimizer_interval_hours: 6
+  review_interval_hours: 2
+
+boundaries:
+  local_steps:
+    - route-symbol
+    - analyze
+    - signal-score
+    - backtest
+    - paper-order
+    - review-closed-trades
+    - strategy-optimizer
+  cloud_steps:
+    - news-risk-summary
+    - whale-context
+    - strategy-analyzer-final-approval
+    - live-pre-trade-approval

@@ -1,0 +1,69 @@
+meta:
+  profile: hermes-ai-trader-v2
+  status: gate_only
+  description: >
+    Clean Hermes AI Trader control plane. It standardizes signal schema,
+    structured committee review, portfolio target construction, plugin
+    lifecycle, model registry, and Hailo task boundaries. It does not open
+    orders by itself.
+
+execution_boundary:
+  opens_orders: false
+  writes_execution_config: false
+  mainnet_live_allowed: false
+  requires_operator_execute: true
+  live_entry_command_after_all_gates_pass: >
+    openclaw-quantctl live-readiness --strategy-config config/strategy-live-pilot.yaml
+    --execution-mode testnet_exploration --compact
+
+open_order_gate:
+  required_sequence:
+    - universe_pass
+    - feature_manifest_live_safe
+    - alpha_positive_expectancy
+    - portfolio_target_accepted
+    - pre_trade_risk_pass
+    - structured_committee_not_reject
+    - live_readiness_allowed
+    - operator_execute
+  min_trades: 100
+  min_profit_factor: 1.25
+  min_expectancy_r: 0.05
+  min_payoff_ratio: 1.20
+  min_promoted_symbols: 6
+  primary_objective: net_expectancy_r_and_payoff_after_cost
+  win_rate_role: screening_metric_not_primary_gate
+
+signal_layer:
+  schema: binance_quant_control.trading_signal.v1
+  local_ledger: state/signals/trading-signals.jsonl
+  openapi_status: deferred_until_positive_alpha
+  copy_sync_status: blocked_until_live_readiness_allows
+
+feature_model_pipeline:
+  manifest_hash_required: true
+  dataset_hash_required_before_ml_promotion: true
+  label_method: triple_barrier_r_multiple
+  replay_unit: symbol_interval_bar_timestamp
+  leakage_allowed: false
+
+hailo:
+  allowed:
+    - chart-regime-triage
+    - candlestick-image-anomaly-veto-after-training
+  blocked:
+    - pandas-backtest-acceleration
+    - order-execution-decision
+  rule: Hailo can veto or triage but cannot approve entries.
+
+legacy_strategy_policy:
+  preserve_if:
+    - has independent family
+    - has positive expectancy after cost
+    - has enough samples
+    - passes portfolio gate
+  quarantine_if:
+    - negative expectancy
+    - tiny sample
+    - duplicate indicator voting
+    - no slippage stress evidence

@@ -1,0 +1,80 @@
+meta:
+  profile: hermes-ai-trade-loop
+  description: >
+    Hermes-controlled continuous Binance futures testnet workflow. A start
+    command enables the loop; every cycle reviews closed trades, refreshes
+    auto-pause, optionally lets the optimizer adjust strategy parameters, scans
+    AI-readiness candidates, and executes only the selected testnet ticket when
+    all gates pass. Mainnet live remains disabled.
+    Open positions are guardian-managed first; when TP/SL closes a position the
+    next cycle records the closed trade and quickly resumes candidate scanning.
+
+strategy:
+  strategy_config: strategy-live-pilot.yaml
+
+readiness:
+  blueprint_config: professional-system-blueprint.default.yaml
+  market: futures
+  limit: 0
+
+execution:
+  execute_testnet_entries: true
+  margin_notional_usdt: null
+  max_orders_per_cycle: 4
+  max_concurrent_positions: 4
+  allow_entries_while_positions_open: true
+
+automation:
+  review_closed_trades: true
+  closed_trade_review_limit: 50
+  auto_pause: true
+  market_sentinel_before_cycle: true
+  market_sentinel_command:
+    - .venv/bin/binance-quant-control
+    - ai-market-sentinel
+    - --compact
+  position_guardian_before_cycle: true
+  position_guardian_command:
+    - python3
+    - scripts/run_autonomous_trader.py
+    - --config
+    - config/autonomous-guardian.default.yaml
+    - --compact
+  strategy_optimizer_before_cycle: true
+  strategy_optimizer_after_closed_position: true
+  strategy_optimizer_min_interval_minutes: 360
+  strategy_optimizer_command:
+    - python3
+    - scripts/run_strategy_optimizer.py
+    - --config
+    - config/strategy-optimizer.default.yaml
+
+context:
+  external_context_before_cycle: true
+  external_context_config: external-context.default.yaml
+  external_context_symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
+    - DOGEUSDT
+    - TRXUSDT
+  external_context_min_interval_minutes: 10
+  hailo_triage_before_cycle: true
+  hailo_triage_command:
+    - /home/robert/python/bin/openclaw-hailo-triage
+    - --once
+  hailo_triage_min_interval_minutes: 5
+
+safety:
+  execution_mode: testnet_exploration
+  mainnet_live_allowed: false
+  require_readiness_ticket: true
+  pause_on_stop_command: true
+
+loop:
+  max_cycles_per_run: 1
+  sleep_seconds: 300
+  position_poll_seconds: 45
+  reentry_scan_seconds: 5
+  stop_on_execution_error: true

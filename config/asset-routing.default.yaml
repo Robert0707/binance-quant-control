@@ -1,0 +1,421 @@
+meta:
+  description: >
+    Multi-asset routing for simulation-first strategy testing. Every route stays
+    in paper/demo-first mode until review data and backtests converge.
+
+routes:
+  btc-core:
+    asset_class: btc_core
+    symbols: [BTCUSDT]
+    strategy_config: strategy-btc-volatility.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: demo_testnet
+    review_lane: btc-volatility-review
+    rationale: >
+      BTC uses a stricter breakout and volatility-confirmation lane because it
+      trends well but punishes late entries.
+    tags: [core, breakout, volatility]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 10
+      max_loss_streak: 2
+      elite_enabled: true
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  eth-core:
+    asset_class: eth_core
+    symbols: [ETHUSDT]
+    strategy_config: strategy-eth-trend.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: demo_testnet
+    review_lane: eth-trend-review
+    rationale: >
+      ETH favors continuation and cleaner trend structure, so use a trend lane
+      before considering any faster alt profile.
+    tags: [core, continuation, trend]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 11
+      max_loss_streak: 2
+      elite_enabled: true
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  xau-macro:
+    asset_class: xau_macro
+    symbols: [XAUTUSDT, PAXGUSDT, XAUUSD, XAU, GOLD]
+    strategy_config: strategy-xau-macro.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: xau-macro-review
+    rationale: >
+      Native XAU is not directly executable through this Binance-first control
+      plane, so tokenized-gold proxies stay on a macro-confirmed paper lane
+      until a dedicated external metals connector exists.
+    tags: [macro, gold, defensive, news-led]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.45
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 9
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  bnb-mean-reversion:
+    asset_class: exchange_token_event_risk
+    symbols: [BNBUSDT]
+    strategy_config: strategy-core-high-win-research.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: bnb-event-review
+    rationale: >
+      BNB is exchange/ecosystem-event sensitive. Local research only supports a
+      low-sample mean-reversion candidate, so keep it paper-only until event
+      filters and review samples improve.
+    tags: [alt, exchange-token, event-risk, mean-reversion]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.35
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 10
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  sol-volatility-breakout:
+    asset_class: high_beta_l1
+    symbols: [SOLUSDT]
+    strategy_config: strategy-core-high-win-research.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: sol-volatility-review
+    rationale: >
+      SOL is a high-beta L1. It may support volatility breakout or range
+      reversion, but each family must be tested independently and remain
+      paper-only until promotion thresholds are met.
+    tags: [alt, high-beta, breakout, mean-reversion]
+    validation:
+      screening_min_win_rate: 68
+      screening_min_profit_factor: 1.45
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 12
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  xrp-event-mean-reversion:
+    asset_class: event_liquidity_alt
+    symbols: [XRPUSDT]
+    strategy_config: strategy-core-high-win-research.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: xrp-event-review
+    rationale: >
+      XRP is event and liquidity driven. The route allows only separately
+      evaluated mean-reversion research and blocks promotion during news risk.
+    tags: [alt, event-risk, mean-reversion]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.35
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 11
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  trx-mean-reversion:
+    asset_class: stablecoin_settlement_alt
+    symbols: [TRXUSDT]
+    strategy_config: strategy-core-high-win-research.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: trx-range-review
+    rationale: >
+      TRX currently has the best local 4h mean-reversion candidate, but sample
+      size is still insufficient and it must remain paper-only.
+    tags: [alt, stablecoin-settlement, mean-reversion]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.35
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 10
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  link-defensive-research:
+    asset_class: oracle_defi_beta
+    symbols: [LINKUSDT]
+    strategy_config: strategy-core-high-win-research.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: link-defi-review
+    rationale: >
+      LINK mean-reversion is negative in local research. Keep it trend-only,
+      paper-only, and require sector confirmation.
+    tags: [alt, oracle, defi, trend]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.35
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 12
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  aave-defi-research:
+    asset_class: defi_lending_beta
+    symbols: [AAVEUSDT]
+    strategy_config: strategy-core-high-win-research.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper_research_only
+    review_lane: aave-defi-review
+    rationale: >
+      AAVE is DeFi/lending beta and current local mean-reversion is negative.
+      Keep it paper-only trend research.
+    tags: [alt, defi, trend]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.35
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 12
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  major-alt-trend:
+    asset_class: major_alt_trend
+    symbols:
+      - ADAUSDT
+      - AVAXUSDT
+      - NEARUSDT
+      - UNIUSDT
+      - LTCUSDT
+      - BCHUSDT
+      - FILUSDT
+      - ATOMUSDT
+      - APTUSDT
+      - INJUSDT
+      - ARBUSDT
+      - OPUSDT
+      - SUIUSDT
+    strategy_config: strategy-major-alt-trend.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper
+    review_lane: major-alt-review
+    rationale: >
+      Large alts use a shared trend lane with stronger ADX and convergence than
+      the meme basket, but looser than BTC.
+    tags: [alt, trend, momentum]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 14
+      max_loss_streak: 3
+      elite_enabled: true
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  doge-meme-high-beta:
+    asset_class: meme_high_beta
+    symbols:
+      - DOGEUSDT
+    strategy_config: strategy-meme-momentum.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper
+    review_lane: doge-market-bot-review
+    rationale: >
+      DOGE has its own market-bot route because the six-symbol router validated
+      DOGE separately from the older broad meme basket. Keep high-beta sizing,
+      but do not inherit quarantine or side-risk history from unrelated meme
+      symbols.
+    tags: [meme, high-beta, market-bot, doge]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 18
+      max_loss_streak: 3
+      elite_enabled: true
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  meme-high-beta:
+    asset_class: meme_high_beta
+    symbols:
+      - PENGUUSDT
+      - 1000PEPEUSDT
+      - 1000LUNCUSDT
+      - TRUMPUSDT
+      - WIFUSDT
+      - ORCAUSDT
+      - HYPERUSDT
+      - SOONUSDT
+      - APEUSDT
+      - AXSUSDT
+      - API3USDT
+    strategy_config: strategy-meme-momentum.yaml
+    market: futures
+    interval: 1h
+    simulation_mode: paper
+    review_lane: meme-beta-review
+    rationale: >
+      High-beta and meme symbols get a faster lane with tighter trailing and
+      stricter post-trade review because regime shifts are violent.
+    tags: [meme, high-beta, fast-review]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 18
+      max_loss_streak: 3
+      elite_enabled: true
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100
+
+  defensive-unknown:
+    asset_class: defensive_unknown
+    symbols: []
+    strategy_config: strategy-defensive-default.yaml
+    market: futures
+    interval: 4h
+    simulation_mode: paper
+    review_lane: unknown-paper-review
+    rationale: >
+      Unknown symbols stay on the most conservative paper-first lane until they
+      earn a dedicated route.
+    tags: [unknown, conservative, paper-only]
+    validation:
+      screening_min_win_rate: 65
+      screening_min_profit_factor: 1.2
+      screening_min_expectancy_r: 0.05
+      screening_min_payoff_ratio: 1.0
+      screening_min_trades: 100
+      validation_min_win_rate: 70
+      validation_min_profit_factor: 1.5
+      validation_min_expectancy_r: 0.1
+      validation_min_payoff_ratio: 1.15
+      validation_min_simulated_trades: 100
+      max_drawdown_pct: 9
+      max_loss_streak: 2
+      elite_enabled: false
+      elite_min_win_rate: 90
+      elite_min_profit_factor: 1.5
+      elite_min_trades: 100

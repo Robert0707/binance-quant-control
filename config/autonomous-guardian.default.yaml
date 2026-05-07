@@ -1,0 +1,39 @@
+meta:
+  lane_mode: local_guardian
+  description: >
+    High-frequency local-only guardian for open positions. Keeps TP/SL and
+    trailing protection maintained without invoking cloud judgment.
+
+strategy:
+  strategy_config: strategy-hermes-pro.auto.yaml
+
+automation:
+  review_closed_trades: true
+  auto_pause: true
+  review_limit: 20
+  execute_live_entries: false
+  execute_position_protection: true
+  adaptive_exit_enabled: true
+  require_digest_action: pre_trade_notify
+  require_strategy_analyzer_approval: true
+  min_strategy_analyzer_confidence: 0.62
+  max_managed_positions: 5
+  candidate_symbol_source: digest_selected
+  execution_mode: testnet_exploration
+
+integrations:
+  digest_enabled: false
+  reuse_cached_digest: false
+  digest_min_interval_minutes: 240
+  skip_digest_when_positions_open: true
+  hailo_enabled: false
+  hailo_config: config.yaml
+
+risk:
+  trailing_callback_pct: 0.7
+  adaptive_exit_min_profit_r: 0.35
+  adaptive_exit_max_loss_r: -0.35
+  adaptive_exit_min_reversal_score: 5.0
+  adaptive_exit_min_confidence: 0.62
+  margin_notional_usdt: 3.0
+  min_expected_profit_usdt: 2.0
