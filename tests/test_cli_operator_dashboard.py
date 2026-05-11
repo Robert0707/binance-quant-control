@@ -37,6 +37,25 @@ def test_cmd_operator_dashboard_compact_summarizes_execution_journal(monkeypatch
             "stage": "watch_only_research",
             "mainnet_customer_ready": False,
         },
+        "candidate_pool": {
+            "mode": "short_medium_long_candidate_pool_v1",
+            "simulation_trade_allowed": False,
+            "readiness_allowed_count": 0,
+            "ready_horizons": [],
+            "missing_horizons": ["short"],
+            "horizons": {
+                "short": {"status": "blocked", "repair_action": "run_short_horizon_research_sweep"},
+                "medium": {"status": "candidate", "repair_action": "expand_walk_forward_and_readiness_validation"},
+                "long": {"status": "candidate", "repair_action": "expand_walk_forward_and_readiness_validation"},
+            },
+            "next_action": "continue_scan_research_and_readiness_repairs",
+            "guardrails": {
+                "mainnet_live_allowed": False,
+                "requires_decision_audit_passed": True,
+                "requires_readiness_allowed_candidate": True,
+                "hold_is_valid_when_no_candidate": True,
+            },
+        },
         "decision_artifact_audit": {
             "status": "passed",
             "scope": "since_contract",
@@ -140,6 +159,11 @@ def test_cmd_operator_dashboard_compact_summarizes_execution_journal(monkeypatch
     }
     assert "binance_response" not in latest
     assert output["product_readiness"]["status"] == "blocked"  # type: ignore[index]
+    assert output["candidate_pool"]["simulation_trade_allowed"] is False  # type: ignore[index]
+    assert output["candidate_pool"]["missing_horizons"] == ["short"]  # type: ignore[index]
+    assert output["candidate_pool"]["horizons"]["medium"]["status"] == "candidate"  # type: ignore[index]
+    assert output["candidate_pool"]["guardrails"]["mainnet_live_allowed"] is False  # type: ignore[index]
+    assert output["candidate_pool"]["guardrails"]["hold_is_valid_when_no_candidate"] is True  # type: ignore[index]
     assert output["decision_artifact_audit"]["status"] == "passed"  # type: ignore[index]
     assert output["risk_combo_matrix"]["promising_surface_count"] == 2  # type: ignore[index]
     assert output["risk_combo_matrix"]["robust_surface_count"] == 0  # type: ignore[index]

@@ -1380,6 +1380,7 @@ def cmd_operator_dashboard(args: argparse.Namespace) -> None:
             "protective_orders": payload["protective_orders"],
             "execution_journal": compact_execution_journal,
             "product_readiness": payload.get("product_readiness"),
+            "candidate_pool": payload.get("candidate_pool"),
             "decision_artifact_audit": payload.get("decision_artifact_audit"),
             "risk_combo_matrix": payload.get("risk_combo_matrix"),
             "loss_diagnostics": {

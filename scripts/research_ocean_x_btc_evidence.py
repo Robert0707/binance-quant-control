@@ -1480,13 +1480,6 @@ def _evaluate_candidate(
     windows_with_sample = [item for item in window_results if int(item.get("trade_count") or 0) > 0]
     required_positive_windows = math.ceil(walk_forward_windows * 0.67)
     positive_windows = sum(1 for item in window_results if _safe_float(item.get("total_return_pct")) > 0.0)
-    positive_train_test_windows = sum(
-        1
-        for item in windows_with_sample
-        if int(item.get("trade_count") or 0) >= min_test_trades
-        and _profit_factor_value(item.get("profit_factor")) >= min_profit_factor
-        and _safe_float(item.get("expectancy_pct")) >= min_expectancy_pct
-    )
     min_window_win_rate = min((_safe_float(item.get("win_rate")) for item in windows_with_sample), default=0.0)
     min_window_profit_factor = min(
         (

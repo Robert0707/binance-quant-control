@@ -121,6 +121,7 @@ Hermes 交易員模式：
 - `repository-audit` 是專案檔案與架構盤點入口；預設跳過 `.env`、`state/`、`reports/`、快取與生成物，避免把秘密或噪音當成架構本體。
 - `professional-system-audit` 是參考 TradingAgents / Lumibot / OctoBot / intelligent-trading-bot / AI-Trader 與主流風控後的專業交易系統成熟度 gate；只檢查架構、alpha 證據與 promotion blockers，不送單、不改 live 設定。
 - `docs/architecture/repository-map.md` 是目前檔案邊界與大型模組壓力點索引。
+- `docs/architecture/program-pruning-audit.md` 是架構清理與保留/刪除依據；目前刪除舊式 `targeted_volatile_sweep.py`，保留 n8n/Freqtrade/service 人工入口。
 - `docs/architecture/professional-trading-system-blueprint.md` 是從找幣到交易的目標架構與 keep/refactor/rebuild 清單。
 - `docs/architecture/hermes-ai-trader-v2.md` 是 Hermes AI Trader v2 的乾淨架構與 Hailo 分工。
 - `docs/workflows/hermes-ai-trader-v2-workflow.md` 是一鍵 gate 工作流。

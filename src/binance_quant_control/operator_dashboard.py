@@ -19,6 +19,7 @@ OPERATOR_DASHBOARD_DIR = STATE_DIR / "operator-dashboard"
 N8N_DIGEST_DIR = STATE_DIR / "n8n-digests"
 RISK_COMBO_MATRIX_DIR = STATE_DIR / "risk-combo-matrix"
 RISK_COMBO_SWEEP_DIR = STATE_DIR / "risk-combo-sweeps"
+READINESS_SCAN_DIR = STATE_DIR / "hermes-readiness-scan"
 
 
 def _utc_now() -> datetime:
@@ -519,6 +520,154 @@ def _load_latest_risk_combo_matrix_summary(
     }
 
 
+def _latest_json_report(root: Path, pattern: str) -> tuple[dict[str, Any], str]:
+    candidates = sorted(
+        root.glob(pattern) if root.exists() else [],
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return {}, ""
+    latest = candidates[0]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, str(latest)
+    return payload if isinstance(payload, dict) else {}, str(latest)
+
+
+def _horizon_candidate_status(
+    horizon: str,
+    *,
+    matrix_summary: dict[str, Any],
+    readiness_report: dict[str, Any],
+) -> dict[str, Any]:
+    matrix_horizons = matrix_summary.get("horizon_summary") if isinstance(matrix_summary.get("horizon_summary"), dict) else {}
+    matrix_row = matrix_horizons.get(horizon) if isinstance(matrix_horizons.get(horizon), dict) else {}
+    research_report = (
+        readiness_report.get("research_candidate_report")
+        if isinstance(readiness_report.get("research_candidate_report"), dict)
+        else {}
+    )
+    reviewable_horizons = (
+        research_report.get("reviewable_horizon_counts")
+        if isinstance(research_report.get("reviewable_horizon_counts"), dict)
+        else {}
+    )
+    horizon_candidates = [
+        item
+        for item in (research_report.get("top_candidates") or [])
+        if isinstance(item, dict) and str(item.get("horizon") or "") == horizon
+    ]
+    trade_ready = next((item for item in horizon_candidates if item.get("trade_readiness_allowed")), None)
+    reviewable = int(_float(reviewable_horizons.get(horizon)))
+    promising = int(_float(matrix_row.get("promising_surface_count")))
+    emerging = int(_float(matrix_row.get("emerging_positive_lead_count")))
+    robust = int(_float(matrix_row.get("robust_surface_count")))
+    best_surface = matrix_row.get("best_surface") if isinstance(matrix_row.get("best_surface"), dict) else None
+    representative = trade_ready or (horizon_candidates[0] if horizon_candidates else None)
+
+    if trade_ready:
+        status = "testnet_ready_candidate"
+        repair_action = "run_trade_decision_then_decision_audit"
+    elif robust > 0:
+        status = "candidate"
+        repair_action = "run_ai_readiness_scan_for_robust_candidate"
+    elif promising > 0 or reviewable > 0:
+        status = "candidate"
+        repair_action = "expand_walk_forward_and_readiness_validation"
+    elif emerging > 0:
+        status = "blocked"
+        repair_action = "expand_sample_before_promotion"
+    else:
+        status = "blocked"
+        repair_action = f"run_{horizon}_horizon_research_sweep"
+
+    return {
+        "horizon": horizon,
+        "status": status,
+        "trade_ready": bool(trade_ready),
+        "reviewable_candidate_count": reviewable,
+        "promising_surface_count": promising,
+        "emerging_positive_lead_count": emerging,
+        "robust_surface_count": robust,
+        "best_surface": _compact_risk_combo_surface(best_surface) if best_surface else None,
+        "readiness_candidate": {
+            "symbol": representative.get("symbol"),
+            "side": representative.get("side"),
+            "interval": representative.get("interval"),
+            "route_id": representative.get("route_id"),
+            "research_status": representative.get("research_status"),
+            "next_action": representative.get("readiness_next_action"),
+        }
+        if isinstance(representative, dict)
+        else None,
+        "repair_action": repair_action,
+    }
+
+
+def _build_candidate_pool(
+    *,
+    risk_combo_matrix: dict[str, Any],
+    product_readiness: dict[str, Any],
+    decision_audit: dict[str, Any],
+    readiness_dir: Path | None = None,
+) -> dict[str, Any]:
+    readiness_payload, readiness_path = _latest_json_report(
+        readiness_dir or READINESS_SCAN_DIR,
+        "*-hermes-readiness-scan.json",
+    )
+    readiness_allowed = int(_float(readiness_payload.get("allowed_count"))) if readiness_payload else 0
+    decision_status = str(decision_audit.get("status") or "")
+    product_testnet_ready = bool(product_readiness.get("testnet_trade_ready"))
+    horizons = {
+        horizon: _horizon_candidate_status(
+            horizon,
+            matrix_summary=risk_combo_matrix,
+            readiness_report=readiness_payload,
+        )
+        for horizon in ("short", "medium", "long")
+    }
+    missing_horizons = [
+        horizon
+        for horizon, row in horizons.items()
+        if row["status"] == "blocked" and row["promising_surface_count"] <= 0 and row["reviewable_candidate_count"] <= 0
+    ]
+    ready_horizons = [horizon for horizon, row in horizons.items() if row["trade_ready"]]
+    simulation_allowed = (
+        readiness_allowed > 0
+        and bool(ready_horizons)
+        and decision_status == "passed"
+        and product_testnet_ready
+    )
+    if simulation_allowed:
+        next_action = "run_trade_decision_then_operator_approved_testnet_execution"
+    elif readiness_allowed <= 0:
+        next_action = "continue_scan_research_and_readiness_repairs"
+    elif decision_status != "passed":
+        next_action = "repair_decision_audit_before_testnet_execution"
+    else:
+        next_action = "repair_product_readiness_before_testnet_execution"
+    return {
+        "mode": "short_medium_long_candidate_pool_v1",
+        "simulation_trade_allowed": simulation_allowed,
+        "readiness_allowed_count": readiness_allowed,
+        "ready_horizons": ready_horizons,
+        "missing_horizons": missing_horizons,
+        "horizons": horizons,
+        "latest_readiness_scan_path": readiness_path or None,
+        "decision_audit_status": decision_status,
+        "product_testnet_trade_ready": product_testnet_ready,
+        "next_action": next_action,
+        "guardrails": {
+            "mainnet_live_allowed": False,
+            "requires_decision_audit_passed": True,
+            "requires_readiness_allowed_candidate": True,
+            "hold_is_valid_when_no_candidate": True,
+        },
+    }
+
+
 def _build_customer_feedback(
     *,
     position_count: int,
@@ -693,6 +842,11 @@ def build_operator_dashboard(
         closed_summary=closed_summary,
         loss_summary=loss_summary,
     )
+    candidate_pool = _build_candidate_pool(
+        risk_combo_matrix=risk_combo_matrix,
+        product_readiness=product_readiness,
+        decision_audit=decision_audit,
+    )
 
     payload = {
         "generated_at": _utc_now().isoformat(),
@@ -722,6 +876,7 @@ def build_operator_dashboard(
             "meaning": "append-only order audit history; current exposure comes from positions/protective_orders",
         },
         "product_readiness": product_readiness,
+        "candidate_pool": candidate_pool,
         "decision_artifact_audit": {
             "status": decision_audit.get("status"),
             "scope": decision_audit.get("scope"),

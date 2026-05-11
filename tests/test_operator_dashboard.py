@@ -564,10 +564,38 @@ def test_operator_dashboard_embeds_latest_risk_combo_matrix_summary(monkeypatch,
     )
     sweep_path = sweep_dir / "20260510T080000Z-risk-combo-sweep.json"
     sweep_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    readiness_dir = tmp_path / "hermes-readiness-scan"
+    readiness_dir.mkdir()
+    readiness_path = readiness_dir / "20260510T080500Z-hermes-readiness-scan.json"
+    readiness_path.write_text(
+        json.dumps(
+            {
+                "mode": "hermes_ai_readiness_scanner_v1",
+                "allowed_count": 0,
+                "research_candidate_report": {
+                    "reviewable_horizon_counts": {"medium": 1},
+                    "top_candidates": [
+                        {
+                            "symbol": "TRXUSDT",
+                            "side": "BUY",
+                            "interval": "4h",
+                            "route_id": "trx-mean-reversion",
+                            "horizon": "medium",
+                            "research_status": "reviewable_signal",
+                            "trade_readiness_allowed": False,
+                            "readiness_next_action": "expand_walk_forward_and_readiness_validation",
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(dashboard, "OPERATOR_DASHBOARD_DIR", tmp_path / "operator-dashboard")
     monkeypatch.setattr(dashboard, "RISK_COMBO_MATRIX_DIR", matrix_dir)
     monkeypatch.setattr(dashboard, "RISK_COMBO_SWEEP_DIR", sweep_dir)
+    monkeypatch.setattr(dashboard, "READINESS_SCAN_DIR", readiness_dir)
     monkeypatch.setattr(dashboard, "ensure_runtime_dirs", lambda: None)
     monkeypatch.setattr(dashboard, "BinanceClient", lambda settings: FlatClient(settings))
     monkeypatch.setattr(
@@ -631,6 +659,120 @@ def test_operator_dashboard_embeds_latest_risk_combo_matrix_summary(monkeypatch,
     assert "--target-side BUY" in matrix["validation_plan"][0]["interactive_probe_command"]
     assert matrix["promotion_boundary"]["mainnet_live_allowed"] is False
     assert matrix["promotion_boundary"]["max_per_trade_risk_pct"] == 0.025
+    pool = payload["candidate_pool"]
+    assert pool["mode"] == "short_medium_long_candidate_pool_v1"
+    assert pool["simulation_trade_allowed"] is False
+    assert pool["readiness_allowed_count"] == 0
+    assert pool["latest_readiness_scan_path"] == str(readiness_path)
+    assert pool["horizons"]["short"]["status"] == "blocked"
+    assert pool["horizons"]["short"]["repair_action"] == "run_short_horizon_research_sweep"
+    assert pool["horizons"]["medium"]["status"] == "candidate"
+    assert pool["horizons"]["medium"]["readiness_candidate"]["symbol"] == "TRXUSDT"
+    assert pool["horizons"]["long"]["status"] == "candidate"
+    assert pool["missing_horizons"] == ["short"]
+    assert pool["next_action"] == "continue_scan_research_and_readiness_repairs"
+    assert pool["guardrails"]["hold_is_valid_when_no_candidate"] is True
+    assert pool["guardrails"]["mainnet_live_allowed"] is False
+
+
+def test_operator_dashboard_candidate_pool_allows_only_audited_readiness_candidate(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class FlatClient(FakeClient):
+        def positions(self):
+            return []
+
+    matrix_dir = tmp_path / "risk-combo-matrix"
+    sweep_dir = tmp_path / "risk-combo-sweeps"
+    readiness_dir = tmp_path / "hermes-readiness-scan"
+    matrix_dir.mkdir()
+    sweep_dir.mkdir()
+    readiness_dir.mkdir()
+    matrix_path = matrix_dir / "20260510T080706Z-risk-combo-matrix.json"
+    matrix_path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-05-10T08:07:06+00:00",
+                "mode": "risk_combo_side_interval_matrix_v1",
+                "safety": {"opens_orders": False, "writes_execution_config": False, "mainnet_live_allowed": False},
+                "surface_count": 3,
+                "promising_surface_count": 3,
+                "robust_surface_count": 1,
+                "horizon_summary": {
+                    "short": {"promising_surface_count": 1, "robust_surface_count": 0},
+                    "medium": {"promising_surface_count": 1, "robust_surface_count": 1},
+                    "long": {"promising_surface_count": 1, "robust_surface_count": 0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sweep_dir / "20260510T080000Z-risk-combo-sweep.json").write_text("{}", encoding="utf-8")
+    readiness_path = readiness_dir / "20260510T080500Z-hermes-readiness-scan.json"
+    readiness_path.write_text(
+        json.dumps(
+            {
+                "mode": "hermes_ai_readiness_scanner_v1",
+                "allowed_count": 1,
+                "research_candidate_report": {
+                    "reviewable_horizon_counts": {"short": 1, "medium": 1, "long": 1},
+                    "top_candidates": [
+                        {
+                            "symbol": "TRXUSDT",
+                            "side": "BUY",
+                            "interval": "4h",
+                            "route_id": "trx-mean-reversion",
+                            "horizon": "medium",
+                            "research_status": "reviewable_signal",
+                            "trade_readiness_allowed": True,
+                            "readiness_next_action": "execute_ready_dry_run_only",
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(dashboard, "OPERATOR_DASHBOARD_DIR", tmp_path / "operator-dashboard")
+    monkeypatch.setattr(dashboard, "RISK_COMBO_MATRIX_DIR", matrix_dir)
+    monkeypatch.setattr(dashboard, "RISK_COMBO_SWEEP_DIR", sweep_dir)
+    monkeypatch.setattr(dashboard, "READINESS_SCAN_DIR", readiness_dir)
+    monkeypatch.setattr(dashboard, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(dashboard, "BinanceClient", lambda settings: FlatClient(settings))
+    monkeypatch.setattr(
+        dashboard,
+        "summarize_closed_trade_reviews",
+        lambda: {"count": 140, "total_realized_pnl_usdt": 7.5, "profit_factor": 1.18},
+    )
+    monkeypatch.setattr(dashboard, "summarize_live_orders", lambda: {"count": 0})
+    monkeypatch.setattr(dashboard, "read_live_orders", lambda: [])
+    monkeypatch.setattr(
+        dashboard,
+        "run_loss_diagnostics",
+        lambda min_bucket_trades, top_n: {
+            "summary": {"count": 140, "profit_factor": 1.18, "avg_r": 0.04, "stop_loss_ratio": 54.0},
+            "findings": [],
+            "worst_buckets": [],
+            "root_cause_recommendations": [],
+            "report_path": str(tmp_path / "loss.json"),
+        },
+    )
+    monkeypatch.setattr(dashboard, "_load_latest_digest_summary", lambda: {"available": False})
+    monkeypatch.setattr(dashboard, "run_decision_audit", lambda **kwargs: _fake_decision_audit(tmp_path))
+
+    payload = dashboard.build_operator_dashboard(_settings())
+
+    assert payload["product_readiness"]["testnet_trade_ready"] is True
+    pool = payload["candidate_pool"]
+    assert pool["simulation_trade_allowed"] is True
+    assert pool["ready_horizons"] == ["medium"]
+    assert pool["missing_horizons"] == []
+    assert pool["horizons"]["medium"]["status"] == "testnet_ready_candidate"
+    assert pool["horizons"]["medium"]["readiness_candidate"]["symbol"] == "TRXUSDT"
+    assert pool["next_action"] == "run_trade_decision_then_operator_approved_testnet_execution"
+    assert pool["guardrails"]["mainnet_live_allowed"] is False
 
 
 def test_operator_dashboard_flags_stale_risk_combo_matrix(monkeypatch, tmp_path: Path) -> None:
