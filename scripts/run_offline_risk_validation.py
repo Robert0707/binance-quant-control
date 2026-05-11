@@ -101,7 +101,7 @@ def _sweep_command(args: argparse.Namespace) -> list[str]:
     ]
 
 
-def _worker_script(run_dir: Path, sweep_command: list[str], latest_sweeps: int) -> str:
+def _worker_script(run_dir: Path, sweep_command: list[str], latest_sweeps: int, step_timeout_seconds: int) -> str:
     summary_path = run_dir / "summary.json"
     progress_path = run_dir / "progress.json"
     return f"""
@@ -135,14 +135,31 @@ def write_progress(name, command, status):
 
 def run_step(name, command):
     write_progress(name, command, "running")
-    completed = subprocess.run(command, cwd=project_root, text=True, capture_output=True, check=False)
     output_path = run_dir / f"{{name}}.stdout.log"
     error_path = run_dir / f"{{name}}.stderr.log"
-    output_path.write_text(completed.stdout or "", encoding="utf-8")
-    error_path.write_text(completed.stderr or "", encoding="utf-8")
+    timed_out = False
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=project_root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout={step_timeout_seconds},
+        )
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        returncode = completed.returncode
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = exc.stdout or ""
+        stderr = (exc.stderr or "") + f"\\ntimeout after {step_timeout_seconds} seconds"
+        returncode = 124
+    output_path.write_text(stdout, encoding="utf-8")
+    error_path.write_text(stderr, encoding="utf-8")
     response = None
-    if completed.stdout:
-        lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if stdout:
+        lines = [line for line in stdout.splitlines() if line.strip()]
         if lines:
             try:
                 response = json.loads(lines[-1])
@@ -151,12 +168,13 @@ def run_step(name, command):
     step = {{
         "name": name,
         "command": command,
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "stdout_path": str(output_path),
         "stderr_path": str(error_path),
+        "timed_out": timed_out,
         "response": response,
     }}
-    write_progress(name, command, "ok" if completed.returncode == 0 else "error")
+    write_progress(name, command, "ok" if returncode == 0 else ("timeout" if timed_out else "error"))
     return step
 
 
@@ -164,7 +182,7 @@ steps = []
 sweep_command = {sweep_command!r}
 steps.append(run_step("risk_combo_sweep", sweep_command))
 steps.append(run_step("risk_combo_matrix", [
-    str(binary), "risk-combo-matrix", "--latest-sweeps", {latest_sweeps}, "--compact"
+    str(binary), "risk-combo-matrix", "--latest-sweeps", {str(latest_sweeps)!r}, "--compact"
 ]))
 steps.append(run_step("ai_readiness_scan", [
     str(binary), "ai-readiness-scan", "--execution-mode", "testnet_exploration",
@@ -194,7 +212,10 @@ def start(args: argparse.Namespace) -> int:
     sweep_command = _sweep_command(args)
     worker_path = run_dir / "worker.py"
     log_path = run_dir / "run.log"
-    worker_path.write_text(_worker_script(run_dir, sweep_command, args.latest_sweeps), encoding="utf-8")
+    worker_path.write_text(
+        _worker_script(run_dir, sweep_command, args.latest_sweeps, args.step_timeout_seconds),
+        encoding="utf-8",
+    )
     log_file = log_path.open("w", encoding="utf-8")
     process = subprocess.Popen(
         [sys.executable, str(worker_path)],
@@ -213,6 +234,7 @@ def start(args: argparse.Namespace) -> int:
         "worker_path": str(worker_path),
         "sweep_command": sweep_command,
         "latest_sweeps": args.latest_sweeps,
+        "step_timeout_seconds": args.step_timeout_seconds,
         "opens_orders": False,
         "writes_execution_config": False,
         "mainnet_live_allowed": False,
@@ -277,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     start_parser.add_argument("--max-walk-forward-validations", type=int, default=6)
     start_parser.add_argument("--top-n", type=int, default=10)
     start_parser.add_argument("--latest-sweeps", type=int, default=12)
+    start_parser.add_argument("--step-timeout-seconds", type=int, default=7200)
 
     sub.add_parser("status")
     args = parser.parse_args(argv)
