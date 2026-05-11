@@ -34,6 +34,7 @@ MARKET_BOT_GATE_PATTERNS = (
     "market-bot-gate/*-market-bot-gate.json",
     "market-bot-*/*-market-bot-gate.json",
 )
+RISK_COMBO_MATRIX_DIR = STATE_DIR / "risk-combo-matrix"
 TUNABLE_STRATEGY_PATHS = frozenset(
     {
         "profile",
@@ -135,7 +136,155 @@ def latest_market_bot_gate_report(state_dir: Path | None = None) -> dict[str, An
     if latest is None:
         return None
     return latest[2]
-    return None
+
+
+def latest_risk_combo_matrix_report(state_dir: Path | None = None) -> dict[str, Any] | None:
+    active_state_dir = state_dir or RISK_COMBO_MATRIX_DIR
+    candidates = sorted(
+        active_state_dir.glob("*-risk-combo-matrix.json") if active_state_dir.exists() else [],
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    latest: tuple[datetime, float, dict[str, Any]] | None = None
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            payload.setdefault("report_path", str(path))
+            generated_at = _parse_report_datetime(payload.get("generated_at"))
+            sort_time = generated_at or datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            candidate = (sort_time, path.stat().st_mtime, payload)
+            if latest is None or candidate[:2] > latest[:2]:
+                latest = candidate
+    if latest is None:
+        return None
+    return latest[2]
+
+
+def _risk_combo_surface_metric(surface: dict[str, Any], section: str, key: str) -> float:
+    metrics = surface.get(section) if isinstance(surface.get(section), dict) else {}
+    try:
+        return float(metrics.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def evaluate_risk_combo_live_gate(
+    *,
+    symbol: str,
+    route_id: str = "",
+    side: str = "",
+    interval: str = "",
+    max_report_age_hours: float = 24.0,
+) -> dict[str, Any]:
+    report = latest_risk_combo_matrix_report()
+    if report is None:
+        return {
+            "allowed": False,
+            "source": "risk_combo_matrix",
+            "report_path": None,
+            "report_age_hours": None,
+            "reasons": ["No risk-combo matrix report is available."],
+            "matched_surface": None,
+        }
+
+    reasons: list[str] = []
+    generated_at = _parse_report_datetime(report.get("generated_at"))
+    age_hours = None
+    if generated_at is None:
+        reasons.append("Latest risk-combo matrix report has no parseable generated_at timestamp.")
+    else:
+        age_hours = (_utc_now() - generated_at).total_seconds() / 3600.0
+        if max_report_age_hours > 0 and age_hours > max_report_age_hours:
+            reasons.append(
+                f"Latest risk-combo matrix report is stale at {age_hours:.1f}h "
+                f"(max {max_report_age_hours:.1f}h)."
+            )
+
+    safety = report.get("safety") if isinstance(report.get("safety"), dict) else {}
+    if safety.get("opens_orders") or safety.get("writes_execution_config") or safety.get("mainnet_live_allowed"):
+        reasons.append("Risk-combo matrix safety boundary is not research-only.")
+
+    normalized_symbol = str(symbol or "").upper()
+    normalized_route = str(route_id or "")
+    normalized_side = str(side or "").upper()
+    normalized_interval = str(interval or "")
+    surfaces = [row for row in (report.get("surfaces") or []) if isinstance(row, dict)]
+    if not surfaces and isinstance(report.get("best_surface"), dict):
+        surfaces = [report["best_surface"]]
+
+    matched = next(
+        (
+            row
+            for row in surfaces
+            if str(row.get("symbol") or "").upper() == normalized_symbol
+            and (not normalized_route or str(row.get("route_id") or "") == normalized_route)
+            and (not normalized_side or str(row.get("target_side") or "").upper() == normalized_side)
+            and (not normalized_interval or str(row.get("target_interval") or "") == normalized_interval)
+        ),
+        None,
+    )
+    if matched is None:
+        matched = next(
+            (
+                row
+                for row in surfaces
+                if str(row.get("symbol") or "").upper() == normalized_symbol
+                and (not normalized_side or str(row.get("target_side") or "").upper() == normalized_side)
+                and (not normalized_interval or str(row.get("target_interval") or "") == normalized_interval)
+            ),
+            None,
+        )
+    if matched is None:
+        reasons.append(f"Risk-combo matrix has no matching robust surface for {normalized_symbol}.")
+    else:
+        if not matched.get("promotion_eligible"):
+            reasons.append("Risk-combo surface is not promotion eligible.")
+        if not matched.get("recovery_gate_passed"):
+            reasons.append("Risk-combo recovery gate has not passed.")
+        if not matched.get("robust_recovery_gate_passed"):
+            reasons.append("Risk-combo robust recovery gate has not passed.")
+        full_trades = _risk_combo_surface_metric(matched, "full", "trade_count")
+        test_trades = _risk_combo_surface_metric(matched, "test", "trade_count")
+        full_pf = _risk_combo_surface_metric(matched, "full", "profit_factor")
+        test_pf = _risk_combo_surface_metric(matched, "test", "profit_factor")
+        full_expectancy = _risk_combo_surface_metric(matched, "full", "expectancy_r")
+        test_expectancy = _risk_combo_surface_metric(matched, "test", "expectancy_r")
+        stop_loss_ratio = _risk_combo_surface_metric(matched, "full", "stop_loss_ratio")
+        walk_forward = matched.get("walk_forward") if isinstance(matched.get("walk_forward"), dict) else {}
+        wf_windows = int(_risk_combo_surface_metric(matched, "walk_forward", "window_count"))
+        wf_positive = int(_risk_combo_surface_metric(matched, "walk_forward", "positive_expectancy_window_count"))
+        wf_min_pf = _risk_combo_surface_metric(matched, "walk_forward", "min_profit_factor")
+        wf_min_expectancy = _risk_combo_surface_metric(matched, "walk_forward", "min_expectancy_r")
+        if full_trades < 30:
+            reasons.append(f"Risk-combo full sample has only {full_trades:.0f} trades; minimum is 30.")
+        if test_trades < 10:
+            reasons.append(f"Risk-combo test sample has only {test_trades:.0f} trades; minimum is 10.")
+        if full_pf < 1.0 or test_pf < 1.0:
+            reasons.append("Risk-combo full/test profit factor is below 1.0.")
+        if full_expectancy < 0.0 or test_expectancy < 0.0:
+            reasons.append("Risk-combo full/test expectancy is not positive.")
+        if stop_loss_ratio > 55.0:
+            reasons.append(f"Risk-combo stop-loss ratio {stop_loss_ratio:.2f}% exceeds 55.00%.")
+        if wf_windows < 3 or wf_positive < wf_windows:
+            reasons.append("Risk-combo walk-forward validation is not consistently positive.")
+        if wf_min_pf < 1.0 or wf_min_expectancy < 0.0:
+            reasons.append("Risk-combo walk-forward minimum PF/expectancy is below target.")
+        if walk_forward and not matched.get("source_report_path"):
+            reasons.append("Risk-combo surface has no source sweep report path.")
+
+    return {
+        "allowed": not reasons,
+        "source": "risk_combo_matrix",
+        "report_path": report.get("report_path"),
+        "report_age_hours": round(age_hours, 4) if age_hours is not None else None,
+        "robust_surface_count": int(report.get("robust_surface_count") or 0),
+        "promising_surface_count": int(report.get("promising_surface_count") or 0),
+        "reasons": reasons,
+        "matched_surface": matched,
+    }
 
 
 def evaluate_market_bot_live_gate(

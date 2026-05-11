@@ -730,6 +730,53 @@ def test_ai_readiness_scan_adds_promising_risk_combo_matrix_surfaces(
     assert report["top_candidates"][0]["trade_readiness_allowed"] is False
 
 
+def test_research_candidate_report_marks_market_only_near_ready_candidate() -> None:
+    result = scanner.CandidateScanResult(
+        rank=500,
+        symbol="TRXUSDT",
+        side="BUY",
+        interval="1d",
+        route_id="trx-mean-reversion",
+        strategy_family="risk_combo_matrix",
+        machine_state="candidate_ready",
+        pre_gate_allowed=True,
+        scanned=True,
+        allowed=False,
+        next_action="wait_for_market_state",
+        blocker_taxonomy={"market_state": ["Volume z-score is below floor."]},
+        warning_taxonomy={},
+        live_plan={
+            "analysis_score": 70,
+            "analysis_convergence": 1.0,
+            "adx_value": 47.7,
+            "planned_account_risk_pct": 0.0001,
+            "gross_notional_usdt": 15.0,
+            "min_notional_usdt": 5.0,
+            "professional_entry_gate": {
+                "layers": {
+                    "execution_quality": {"reward_risk": 2.8, "net_profit_to_risk": 2.7},
+                    "strategy_performance": {
+                        "count": 76,
+                        "profit_factor": 1.9907,
+                        "expectancy_r": 0.4666,
+                        "payoff_ratio": 2.8897,
+                        "stop_loss_ratio": 0.4342,
+                    },
+                }
+            },
+        },
+        error="",
+    )
+
+    report = scanner._build_research_candidate_report([result])
+
+    assert report["trade_allowed_count"] == 0
+    assert report["near_ready_count"] == 1
+    assert report["near_ready_candidates"][0]["symbol"] == "TRXUSDT"
+    assert report["near_ready_candidates"][0]["positive_expectancy_gap"] == []
+    assert report["near_ready_candidates"][0]["near_ready_market_only"] is True
+
+
 def test_ai_readiness_scan_reports_research_coverage_gaps(
     monkeypatch,
     tmp_path,

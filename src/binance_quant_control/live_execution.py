@@ -20,7 +20,11 @@ from .route_risk_control import route_quarantine_status
 from .side_risk_policy import evaluate_route_side_risk
 from .signal_scoring import build_signal_scores
 from .strategy import StrategyConfig
-from .strategy_optimizer import evaluate_market_bot_live_gate, evaluate_optimizer_live_gate
+from .strategy_optimizer import (
+    evaluate_market_bot_live_gate,
+    evaluate_optimizer_live_gate,
+    evaluate_risk_combo_live_gate,
+)
 from .symbol_sizing import build_symbol_sizing_plan
 from .trading_control import load_trading_control_state
 
@@ -454,24 +458,38 @@ def build_live_execution_plan(
 
     route = resolve_symbol_route(symbol)
     market_bot_gate = evaluate_market_bot_live_gate(symbol=symbol, route_id=route.route_id)
+    analysis_interval = str(analysis_payload.get("interval") or strategy.defaults.interval)
+    risk_combo_gate = evaluate_risk_combo_live_gate(
+        symbol=symbol,
+        route_id=route.route_id,
+        side=side,
+        interval=analysis_interval,
+    )
     route_mode_reason = ""
     market_bot_promoted = bool(market_bot_gate.get("allowed"))
+    risk_combo_promoted = bool(risk_combo_gate.get("allowed"))
+    research_promoted = market_bot_promoted or risk_combo_promoted
     if execution_mode == "testnet_exploration" and route.simulation_mode in {
         "paper",
         "paper_research_only",
-    } and not market_bot_promoted:
+    } and not research_promoted:
         route_mode_reason = (
             f"Route {route.route_id} is {route.simulation_mode}; "
-            "unknown/paper-only routes need at least 30 reviews and PF > 1.0 before testnet."
+            "unknown/paper-only routes need accepted market-bot evidence or robust risk-combo evidence before testnet."
         )
         violations.append(route_mode_reason)
     elif execution_mode == "testnet_exploration" and route.simulation_mode in {
         "paper",
         "paper_research_only",
     }:
-        warnings.append(
-            f"Market-bot gate promotes {symbol}/{route.route_id}; paper route flag does not block testnet readiness."
-        )
+        if market_bot_promoted:
+            warnings.append(
+                f"Market-bot gate promotes {symbol}/{route.route_id}; paper route flag does not block testnet readiness."
+            )
+        if risk_combo_promoted:
+            warnings.append(
+                f"Risk-combo matrix promotes {symbol}/{side}/{analysis_interval}; paper route flag does not block testnet readiness."
+            )
     route_quarantine = route_quarantine_status(route.route_id)
     if route_quarantine["quarantined"]:
         reasons = "; ".join(route_quarantine["reasons"]) or "route performance quarantine"
@@ -483,9 +501,9 @@ def build_live_execution_plan(
     optimizer_gate = evaluate_optimizer_live_gate()
     optimizer_gate = {**optimizer_gate, "required": require_optimizer_gate}
     if require_optimizer_gate and not optimizer_gate["allowed"]:
-        if execution_mode == "testnet_exploration" and market_bot_promoted:
+        if execution_mode == "testnet_exploration" and research_promoted:
             warnings.append(
-                "Market-bot gate is accepted; stale or legacy optimizer rejection is advisory for testnet readiness."
+                "Research promotion gate is accepted; stale or legacy optimizer rejection is advisory for testnet readiness."
             )
             warnings.extend(str(item) for item in optimizer_gate["reasons"])
         else:
@@ -528,10 +546,16 @@ def build_live_execution_plan(
                 data=market_bot_gate,
             ),
             trace_step(
+                "risk_combo_gate",
+                allowed=risk_combo_promoted,
+                reasons=list(risk_combo_gate.get("reasons") or []),
+                data=risk_combo_gate,
+            ),
+            trace_step(
                 "optimizer_gate",
                 allowed=not require_optimizer_gate
                 or bool(optimizer_gate.get("allowed"))
-                or bool(execution_mode == "testnet_exploration" and market_bot_promoted),
+                or bool(execution_mode == "testnet_exploration" and research_promoted),
                 reasons=list(optimizer_gate.get("reasons") or []),
                 data=optimizer_gate,
             ),
@@ -667,7 +691,7 @@ def build_live_execution_plan(
         manual_margin_cap_usdt=margin_notional_usdt,
         signal_scores=signal_scores,
         route_side_risk=side_risk_gate.to_dict(),
-        market_bot_promoted=market_bot_promoted,
+        market_bot_promoted=research_promoted,
     )
     leverage = sizing.recommended_leverage
     effective_margin_cap = sizing.recommended_margin_usdt
@@ -888,6 +912,7 @@ def build_live_execution_plan(
         "spread_bps": spread_bps,
         "sizing": {**sizing.to_dict(), "signal_scores": signal_scores},
         "market_bot_gate": market_bot_gate,
+        "risk_combo_gate": risk_combo_gate,
         "regime": analysis.get("regime"),
         "strategy_family": strategy_family,
         "selected_strategy_family": selected_family,
@@ -917,6 +942,7 @@ def build_live_execution_plan(
         require_professional_gate=True,
         allow_thin_scoped_history=execution_mode == "testnet_exploration",
         allow_market_bot_evidence=execution_mode == "testnet_exploration" and market_bot_promoted,
+        allow_risk_combo_evidence=execution_mode == "testnet_exploration" and risk_combo_promoted,
     )
     professional_gate = evaluate_professional_entry_gate(
         side=side,

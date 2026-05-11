@@ -42,6 +42,7 @@ class ProfessionalGatePolicy:
     require_professional_gate: bool = True
     allow_thin_scoped_history: bool = False
     allow_market_bot_evidence: bool = False
+    allow_risk_combo_evidence: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -248,6 +249,49 @@ def _market_bot_review_stats(live_plan: dict[str, Any]) -> dict[str, Any] | None
         "last_stop_loss_at": None,
         "source_report_path": gate.get("report_path"),
         "source_cohort_id": row.get("cohort_id"),
+    }
+
+
+def _risk_combo_review_stats(live_plan: dict[str, Any]) -> dict[str, Any] | None:
+    gate = live_plan.get("risk_combo_gate") if isinstance(live_plan.get("risk_combo_gate"), dict) else {}
+    surface = gate.get("matched_surface") if isinstance(gate.get("matched_surface"), dict) else {}
+    if not gate.get("allowed") or not surface:
+        return None
+    metrics = surface.get("full") if isinstance(surface.get("full"), dict) else {}
+    trade_count = int(_float(metrics.get("trade_count")))
+    if trade_count <= 0:
+        return None
+    win_rate = _float(metrics.get("win_rate")) / 100.0
+    stop_loss_ratio = _float(metrics.get("stop_loss_ratio")) / 100.0
+    expectancy_r = _float(metrics.get("expectancy_r"))
+    payoff_ratio = _float(metrics.get("payoff_ratio"))
+    profit_factor = _float(metrics.get("profit_factor"))
+    loss_rate = max(0.0, 1.0 - win_rate)
+    avg_win_r = _float(metrics.get("avg_win_r"))
+    avg_loss_r = _float(metrics.get("avg_loss_r"), 1.0)
+    break_even_win_rate = 100.0 / (payoff_ratio + 1.0) if payoff_ratio > 0.0 else 100.0
+    return {
+        "count": trade_count,
+        "scope": "risk_combo_matrix",
+        "scope_mature": True,
+        "win_rate": round(win_rate, 4),
+        "loss_rate": round(loss_rate, 4),
+        "stop_loss_ratio": round(stop_loss_ratio, 4),
+        "stop_after_profit_ratio": _float(metrics.get("partial_tp_then_stop_ratio")) / 100.0,
+        "profit_factor": round(profit_factor, 4),
+        "avg_r_multiple": round(expectancy_r, 4),
+        "r_sample_count": trade_count,
+        "loss_streak": int(_float(metrics.get("loss_streak"))),
+        "expectancy_r": round(expectancy_r, 4),
+        "avg_win_r": round(avg_win_r, 4),
+        "avg_loss_r": round(avg_loss_r, 4),
+        "payoff_ratio": round(payoff_ratio, 4),
+        "break_even_win_rate": round(break_even_win_rate, 4),
+        "expectancy_edge_points": round((win_rate * 100.0) - break_even_win_rate, 4),
+        "last_stop_loss_at": None,
+        "source_report_path": gate.get("report_path"),
+        "source_sweep_report_path": surface.get("source_report_path"),
+        "source_surface": surface.get("surface"),
     }
 
 
@@ -597,6 +641,9 @@ def evaluate_professional_entry_gate(
     market_bot_stats = _market_bot_review_stats(live_plan) if active_policy.allow_market_bot_evidence else None
     if market_bot_stats is not None:
         review_stats = market_bot_stats
+    risk_combo_stats = _risk_combo_review_stats(live_plan) if active_policy.allow_risk_combo_evidence else None
+    if risk_combo_stats is not None:
+        review_stats = risk_combo_stats
     performance_passed = True
     if review_stats["count"] < active_policy.min_recent_reviews:
         message = (

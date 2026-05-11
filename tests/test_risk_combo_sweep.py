@@ -681,18 +681,43 @@ def test_risk_combo_matrix_report_marks_promising_surface_without_promotion(tmp_
                 "params": {"target_side": "BUY"},
                 "full": {
                     "trade_count": 21,
+                    "wins": 9,
+                    "losses": 12,
+                    "win_rate": 42.86,
+                    "loss_streak": 0,
                     "profit_factor": 1.755,
                     "expectancy_r": 0.0948,
+                    "avg_win_r": 1.9,
+                    "avg_loss_r": 0.8,
+                    "payoff_ratio": 2.375,
+                    "break_even_win_rate": 29.63,
+                    "expectancy_edge_points": 13.23,
                     "max_drawdown_pct": 0.7662,
                     "stop_loss_ratio": 38.1,
+                    "partial_tp_then_stop_ratio": 20.0,
                 },
-                "train": {"trade_count": 6, "profit_factor": 3.5389, "expectancy_r": 0.2898},
+                "train": {
+                    "trade_count": 6,
+                    "win_rate": 50.0,
+                    "profit_factor": 3.5389,
+                    "expectancy_r": 0.2898,
+                    "payoff_ratio": 2.1,
+                },
                 "test": {
                     "trade_count": 5,
+                    "wins": 4,
+                    "losses": 1,
+                    "win_rate": 80.0,
                     "profit_factor": 21.4049,
                     "expectancy_r": 0.2789,
+                    "avg_win_r": 1.2,
+                    "avg_loss_r": 0.4,
+                    "payoff_ratio": 3.0,
+                    "break_even_win_rate": 25.0,
+                    "expectancy_edge_points": 55.0,
                     "max_drawdown_pct": 0.0406,
                     "stop_loss_ratio": 0.0,
+                    "partial_tp_then_stop_ratio": 0.0,
                 },
                 "walk_forward": {"window_count": 0, "min_profit_factor": 0.0, "min_expectancy_r": 0.0},
                 "recovery_gate": {"passed": False, "reasons": ["test-trade-count-too-low"]},
@@ -843,6 +868,10 @@ def test_risk_combo_matrix_report_marks_promising_surface_without_promotion(tmp_
     assert payload["best_surface"]["surface"] == "buy_4h"
     assert payload["best_surface"]["research_status"] == "promising_but_under_validated"
     assert payload["best_surface"]["promotion_eligible"] is False
+    assert payload["best_surface"]["full"]["win_rate"] == 42.86
+    assert payload["best_surface"]["full"]["payoff_ratio"] == 2.375
+    assert payload["best_surface"]["full"]["avg_win_r"] == 1.9
+    assert payload["best_surface"]["test"]["payoff_ratio"] == 3.0
     assert payload["best_surface"]["gate_reasons"]["recovery"] == ["test-trade-count-too-low"]
     assert payload["validation_plan"][0]["surface"] == "buy_4h"
     assert "--target-side BUY" in payload["validation_plan"][0]["interactive_probe_command"]

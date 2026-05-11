@@ -45,6 +45,31 @@ def _market_bot_plan() -> dict[str, object]:
     return plan
 
 
+def _risk_combo_plan() -> dict[str, object]:
+    plan = dict(_live_plan())
+    plan["risk_combo_gate"] = {
+        "allowed": True,
+        "report_path": "state/risk-combo-matrix.json",
+        "matched_surface": {
+            "surface": "buy_1d",
+            "source_report_path": "state/risk-combo-sweeps/trx.json",
+            "full": {
+                "trade_count": 76,
+                "win_rate": 40.79,
+                "stop_loss_ratio": 43.42,
+                "partial_tp_then_stop_ratio": 55.26,
+                "profit_factor": 1.9907,
+                "expectancy_r": 0.4666,
+                "avg_win_r": 2.2986,
+                "avg_loss_r": 0.7954,
+                "payoff_ratio": 2.8897,
+                "loss_streak": 0,
+            },
+        },
+    }
+    return plan
+
+
 def _latest() -> dict[str, float]:
     return {
         "realized_vol_20": 0.8,
@@ -261,6 +286,46 @@ def test_professional_gate_can_use_market_bot_evidence_for_promoted_testnet_cand
 
     assert result.passed is True
     assert result.layers["strategy_performance"]["scope"] == "market_bot_gate"
+
+
+def test_professional_gate_can_use_risk_combo_evidence_for_promoted_testnet_candidate(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "binance_quant_control.professional_entry_gate.read_closed_trade_reviews",
+        lambda: [
+            {
+                "symbol": "TRXUSDT",
+                "side": "BUY",
+                "route_id": "trx-mean-reversion",
+                "exit_reason": "stop_loss",
+                "realized_pnl_usdt": -1,
+                "realized_r_multiple": -1.0,
+            }
+            for _ in range(6)
+        ],
+    )
+
+    result = evaluate_professional_entry_gate(
+        side="BUY",
+        latest=_latest(),
+        live_plan=_risk_combo_plan(),
+        symbol="TRXUSDT",
+        route_id="trx-mean-reversion",
+        policy=ProfessionalGatePolicy(
+            min_recent_profit_factor=0.85,
+            min_recent_avg_r=-0.05,
+            min_recent_expectancy_r=-0.05,
+            min_recent_payoff_ratio=0.9,
+            max_recent_stop_loss_ratio=0.65,
+            stop_loss_cooldown_hours=0.0,
+            allow_risk_combo_evidence=True,
+        ),
+    )
+
+    assert result.passed is True
+    assert result.layers["strategy_performance"]["scope"] == "risk_combo_matrix"
+    assert result.layers["strategy_performance"]["profit_factor"] == 1.9907
 
 
 def test_professional_gate_blocks_trend_family_in_range_regime(monkeypatch) -> None:

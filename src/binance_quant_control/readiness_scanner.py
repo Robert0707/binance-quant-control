@@ -798,6 +798,12 @@ def _research_candidate_row(result: CandidateScanResult) -> dict[str, Any]:
         quality_score += min(10.0, performance_expectancy * 20.0)
     if stop_loss_ratio is not None:
         quality_score += max(0.0, 10.0 - max(0.0, stop_loss_ratio - 45.0) / 5.0)
+    near_ready_market_only = (
+        result.scanned
+        and not result.allowed
+        and not promotion_gaps
+        and set(blocker_classes) == {"market_state"}
+    )
     return {
         "rank": result.rank,
         "symbol": result.symbol,
@@ -836,6 +842,7 @@ def _research_candidate_row(result: CandidateScanResult) -> dict[str, Any]:
         },
         "research_quality_score": round(quality_score, 4),
         "positive_expectancy_gap": promotion_gaps,
+        "near_ready_market_only": near_ready_market_only,
         "promotion_boundary": "research_only_not_trade_permission",
     }
 
@@ -912,12 +919,14 @@ def _build_research_candidate_report(results: list[CandidateScanResult]) -> dict
                     "promotion_boundary": "does_not_change_live_readiness_or_mainnet_permission",
                 }
             )
+    near_ready_candidates = [row for row in rows if row.get("near_ready_market_only")]
     return {
         "mode": "research_candidate_report_v1",
         "objective": "surface_auditable_buy_sell_research_candidates_without_live_permission",
         "candidate_count": len(rows),
         "reviewable_candidate_count": sum(1 for row in rows if row.get("research_status") == "reviewable_signal"),
         "trade_allowed_count": sum(1 for row in rows if row.get("trade_readiness_allowed")),
+        "near_ready_count": len(near_ready_candidates),
         "side_counts": side_counts,
         "reviewable_side_counts": reviewable_side_counts,
         "horizon_counts": horizon_counts,
@@ -943,6 +952,7 @@ def _build_research_candidate_report(results: list[CandidateScanResult]) -> dict
             "risk_ceiling_pct": 0.025,
         },
         "top_candidates": rows[:10],
+        "near_ready_candidates": near_ready_candidates[:5],
         "promotion_boundary": {
             "mainnet_live_allowed": False,
             "opens_orders": False,
