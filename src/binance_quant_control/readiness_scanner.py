@@ -199,7 +199,7 @@ def _risk_combo_matrix_queue_items(
             continue
         item = _risk_combo_surface_to_queue_item(
             surface,
-            rank=500 + len(queue_items),
+            rank=50 + len(queue_items),
             matrix_path=matrix_path,
         )
         if item is None:
@@ -1037,7 +1037,7 @@ def run_ai_readiness_scan(
         for item in queue
     }
     risk_combo_queue, risk_combo_matrix_path = _risk_combo_matrix_queue_items(existing_keys=existing_keys)
-    queue.extend(risk_combo_queue)
+    queue = [*risk_combo_queue, *queue]
     selected_queue: list[dict[str, Any]] = []
     live_scan_count = 0
     for item in queue:
