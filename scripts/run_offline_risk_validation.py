@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+STATE_DIR = PROJECT_ROOT / "state" / "offline-risk-validation"
+BINANCE_QUANT = PROJECT_ROOT / ".venv" / "bin" / "binance-quant-control"
+
+
+def _stamp() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _metadata_path(run_dir: Path) -> Path:
+    return run_dir / "metadata.json"
+
+
+def _read_metadata(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_running(pid: int) -> bool:
+    return pid > 0 and Path(f"/proc/{pid}").exists()
+
+
+def _latest_run() -> Path | None:
+    if not STATE_DIR.exists():
+        return None
+    runs = [path for path in STATE_DIR.iterdir() if path.is_dir()]
+    return max(runs, key=lambda path: path.name) if runs else None
+
+
+def _sweep_command(args: argparse.Namespace) -> list[str]:
+    return [
+        str(BINANCE_QUANT),
+        "risk-combo-sweep",
+        "--symbols",
+        args.symbols,
+        "--target-side",
+        args.target_side,
+        "--target-interval",
+        args.target_interval,
+        "--limit",
+        str(args.limit),
+        "--grid-mode",
+        args.grid_mode,
+        "--min-test-trades",
+        str(args.min_test_trades),
+        "--target-profit-factor",
+        str(args.target_profit_factor),
+        "--min-expectancy-r",
+        str(args.min_expectancy_r),
+        "--max-stop-loss-ratio",
+        str(args.max_stop_loss_ratio),
+        "--max-configs",
+        str(args.max_configs),
+        "--max-walk-forward-validations",
+        str(args.max_walk_forward_validations),
+        "--top-n",
+        str(args.top_n),
+        "--skip-news",
+        "--compact",
+    ]
+
+
+def _worker_script(run_dir: Path, sweep_command: list[str], latest_sweeps: int) -> str:
+    summary_path = run_dir / "summary.json"
+    return f"""
+import json
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+project_root = Path({str(PROJECT_ROOT)!r})
+run_dir = Path({str(run_dir)!r})
+binary = Path({str(BINANCE_QUANT)!r})
+summary_path = Path({str(summary_path)!r})
+
+
+def now_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def run_step(name, command):
+    completed = subprocess.run(command, cwd=project_root, text=True, capture_output=True, check=False)
+    output_path = run_dir / f"{{name}}.stdout.log"
+    error_path = run_dir / f"{{name}}.stderr.log"
+    output_path.write_text(completed.stdout or "", encoding="utf-8")
+    error_path.write_text(completed.stderr or "", encoding="utf-8")
+    response = None
+    if completed.stdout:
+        lines = [line for line in completed.stdout.splitlines() if line.strip()]
+        if lines:
+            try:
+                response = json.loads(lines[-1])
+            except json.JSONDecodeError:
+                response = None
+    return {{
+        "name": name,
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout_path": str(output_path),
+        "stderr_path": str(error_path),
+        "response": response,
+    }}
+
+
+steps = []
+sweep_command = {sweep_command!r}
+steps.append(run_step("risk_combo_sweep", sweep_command))
+steps.append(run_step("risk_combo_matrix", [
+    str(binary), "risk-combo-matrix", "--latest-sweeps", {latest_sweeps}, "--compact"
+]))
+steps.append(run_step("ai_readiness_scan", [
+    str(binary), "ai-readiness-scan", "--execution-mode", "testnet_exploration",
+    "--max-candidates", "6", "--compact"
+]))
+
+status = "ok" if all(step["returncode"] == 0 for step in steps) else "error"
+summary = {{
+    "status": status,
+    "started_at": None,
+    "finished_at": now_iso(),
+    "run_dir": str(run_dir),
+    "opens_orders": False,
+    "writes_execution_config": False,
+    "mainnet_live_allowed": False,
+    "steps": steps,
+}}
+summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+raise SystemExit(0 if status == "ok" else 1)
+"""
+
+
+def start(args: argparse.Namespace) -> int:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    run_dir = STATE_DIR / f"{_stamp()}-{args.symbols.lower().replace(',', '-')}-{args.target_side.lower()}-{args.target_interval}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    sweep_command = _sweep_command(args)
+    worker_path = run_dir / "worker.py"
+    log_path = run_dir / "run.log"
+    worker_path.write_text(_worker_script(run_dir, sweep_command, args.latest_sweeps), encoding="utf-8")
+    log_file = log_path.open("w", encoding="utf-8")
+    process = subprocess.Popen(
+        [sys.executable, str(worker_path)],
+        cwd=PROJECT_ROOT,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        text=True,
+    )
+    log_file.close()
+    metadata = {
+        "started_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "pid": process.pid,
+        "run_dir": str(run_dir),
+        "log_path": str(log_path),
+        "worker_path": str(worker_path),
+        "sweep_command": sweep_command,
+        "latest_sweeps": args.latest_sweeps,
+        "opens_orders": False,
+        "writes_execution_config": False,
+        "mainnet_live_allowed": False,
+        "status": "running",
+    }
+    _metadata_path(run_dir).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(metadata, separators=(",", ":")))
+    return 0
+
+
+def status(_args: argparse.Namespace) -> int:
+    run_dir = _latest_run()
+    if run_dir is None:
+        print(json.dumps({"status": "not_started"}, separators=(",", ":")))
+        return 0
+    metadata = _read_metadata(_metadata_path(run_dir))
+    pid = int(metadata.get("pid") or 0)
+    summary_path = run_dir / "summary.json"
+    payload = {
+        **metadata,
+        "running": _is_running(pid),
+        "summary_path": str(summary_path),
+        "summary_exists": summary_path.exists(),
+        "summary": None,
+        "log_tail": "",
+    }
+    if summary_path.exists():
+        payload["summary"] = _read_metadata(summary_path)
+        payload["status"] = str((payload["summary"] or {}).get("status") or "completed")
+    elif payload["running"]:
+        payload["status"] = "running"
+    else:
+        payload["status"] = "exited_without_summary"
+    log_path = Path(str(metadata.get("log_path") or run_dir / "run.log"))
+    if log_path.exists():
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        payload["log_tail"] = "\n".join(lines[-10:])
+    print(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run offline risk-combo validation without opening orders.")
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    start_parser = sub.add_parser("start")
+    start_parser.add_argument("--symbols", default="TRXUSDT")
+    start_parser.add_argument("--target-side", choices=("BUY", "SELL"), default="BUY")
+    start_parser.add_argument("--target-interval", default="1d")
+    start_parser.add_argument("--limit", type=int, default=5000)
+    start_parser.add_argument("--grid-mode", choices=("fast", "focused", "standard"), default="focused")
+    start_parser.add_argument("--min-test-trades", type=int, default=30)
+    start_parser.add_argument("--target-profit-factor", type=float, default=1.0)
+    start_parser.add_argument("--min-expectancy-r", type=float, default=0.0)
+    start_parser.add_argument("--max-stop-loss-ratio", type=float, default=55.0)
+    start_parser.add_argument("--max-configs", type=int, default=40)
+    start_parser.add_argument("--max-walk-forward-validations", type=int, default=6)
+    start_parser.add_argument("--top-n", type=int, default=10)
+    start_parser.add_argument("--latest-sweeps", type=int, default=12)
+
+    sub.add_parser("status")
+    args = parser.parse_args(argv)
+    if args.action == "start":
+        return start(args)
+    return status(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
