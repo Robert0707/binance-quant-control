@@ -38,6 +38,19 @@ def test_offline_risk_validation_status_reads_completed_summary(monkeypatch, tmp
         + "\n",
         encoding="utf-8",
     )
+    (run_dir / "progress.json").write_text(
+        json.dumps(
+            {
+                "step": "ai_readiness_scan",
+                "status": "ok",
+                "opens_orders": False,
+                "writes_execution_config": False,
+                "mainnet_live_allowed": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     assert offline.status(object()) == 0
 
@@ -48,3 +61,5 @@ def test_offline_risk_validation_status_reads_completed_summary(monkeypatch, tmp
     assert payload["summary"]["opens_orders"] is False
     assert payload["summary"]["writes_execution_config"] is False
     assert payload["summary"]["mainnet_live_allowed"] is False
+    assert payload["progress"]["step"] == "ai_readiness_scan"
+    assert payload["progress"]["opens_orders"] is False

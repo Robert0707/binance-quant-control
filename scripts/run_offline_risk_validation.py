@@ -76,6 +76,7 @@ def _sweep_command(args: argparse.Namespace) -> list[str]:
 
 def _worker_script(run_dir: Path, sweep_command: list[str], latest_sweeps: int) -> str:
     summary_path = run_dir / "summary.json"
+    progress_path = run_dir / "progress.json"
     return f"""
 import json
 import subprocess
@@ -86,13 +87,27 @@ project_root = Path({str(PROJECT_ROOT)!r})
 run_dir = Path({str(run_dir)!r})
 binary = Path({str(BINANCE_QUANT)!r})
 summary_path = Path({str(summary_path)!r})
+progress_path = Path({str(progress_path)!r})
 
 
 def now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def write_progress(name, command, status):
+    progress_path.write_text(json.dumps({{
+        "updated_at": now_iso(),
+        "step": name,
+        "status": status,
+        "command": command,
+        "opens_orders": False,
+        "writes_execution_config": False,
+        "mainnet_live_allowed": False,
+    }}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+
+
 def run_step(name, command):
+    write_progress(name, command, "running")
     completed = subprocess.run(command, cwd=project_root, text=True, capture_output=True, check=False)
     output_path = run_dir / f"{{name}}.stdout.log"
     error_path = run_dir / f"{{name}}.stderr.log"
@@ -106,7 +121,7 @@ def run_step(name, command):
                 response = json.loads(lines[-1])
             except json.JSONDecodeError:
                 response = None
-    return {{
+    step = {{
         "name": name,
         "command": command,
         "returncode": completed.returncode,
@@ -114,6 +129,8 @@ def run_step(name, command):
         "stderr_path": str(error_path),
         "response": response,
     }}
+    write_progress(name, command, "ok" if completed.returncode == 0 else "error")
+    return step
 
 
 steps = []
@@ -193,8 +210,12 @@ def status(_args: argparse.Namespace) -> int:
         "summary_path": str(summary_path),
         "summary_exists": summary_path.exists(),
         "summary": None,
+        "progress": None,
         "log_tail": "",
     }
+    progress_path = run_dir / "progress.json"
+    if progress_path.exists():
+        payload["progress"] = _read_metadata(progress_path)
     if summary_path.exists():
         payload["summary"] = _read_metadata(summary_path)
         payload["status"] = str((payload["summary"] or {}).get("status") or "completed")
