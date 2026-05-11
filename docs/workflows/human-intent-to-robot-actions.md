@@ -13,6 +13,9 @@
 - `檢討整個流程 / 詳細分流`
   機器人動作：拆成資料收集、策略路由、模擬單、顧單、回測、檢討、優化七段
 
+- `新幣到交易 / 任意幣丟進去 / 不要每隻幣改程式`
+  機器人動作：優先跑 `openclaw-quantctl new-symbol-workflow --symbols SYMBOL --compact`，產出 `reject`、`research_candidate`、`near_ready_market_only`、`testnet_ready_candidate`，不為單一幣寫專用 Python
+
 - `我時間沒有那多 / 不要一個指令一個動作`
   機器人動作：優先使用 `openclaw-quantctl mission --symbols ... --target-return-pct ... --max-leverage ...`，再用 optimizer 補策略收斂
 
@@ -28,4 +31,5 @@ CLI：
 
 - `openclaw-quantctl route-intent "你的句子"`
 - `openclaw-quantctl route-symbol SYMBOL`
+- `openclaw-quantctl new-symbol-workflow --symbols SYMBOL --compact`
 - `openclaw-quantctl mission --symbols BTCUSDT,ETHUSDT,XAU --target-return-pct 8 --max-leverage 3`

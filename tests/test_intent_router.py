@@ -39,6 +39,6 @@ def test_resolve_operator_intent_maps_new_symbol_trade_pipeline() -> None:
     )
 
     assert intent.intent_id == "new-symbol-trade-pipeline"
+    assert "new-symbol-workflow" in intent.actions
     assert "risk-combo-sweep" in intent.actions
-    assert "decision-audit" in intent.actions
     assert "docs/workflows/new-symbol-to-trade-pipeline.md" in intent.resources

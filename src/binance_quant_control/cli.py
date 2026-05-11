@@ -62,6 +62,7 @@ from .live_execution import build_live_execution_plan, execute_live_order
 from .loss_diagnostics import run_loss_diagnostics
 from .market_bot_gate import DEFAULT_MARKET_BOT_GATE_CONFIG, evaluate_market_bot_gate
 from .mission_control import run_trading_mission
+from .new_symbol_workflow import run_new_symbol_workflow
 from .operator_dashboard import build_operator_dashboard
 from .order_journal import (
     ClosedTradeReviewRecord,
@@ -967,6 +968,55 @@ def cmd_route_symbol(args: argparse.Namespace) -> None:
 def cmd_route_intent(args: argparse.Namespace) -> None:
     intent = resolve_operator_intent(args.message)
     print_json({"status": "ok", "message": args.message, "intent": intent.to_dict()})
+
+
+def cmd_new_symbol_workflow(args: argparse.Namespace) -> None:
+    payload = run_new_symbol_workflow(
+        symbols=split_csv_arg(args.symbols),
+        intervals=split_csv_arg(args.intervals),
+        sides=split_csv_arg(args.sides),
+        research_depth=args.research_depth,
+        plan_only=bool(args.plan_only),
+        output_dir=args.output_dir or None,
+        strategy_config=args.strategy_config,
+        blueprint_config=args.blueprint_config,
+        max_readiness_candidates=args.max_readiness_candidates,
+    )
+    if getattr(args, "compact", False):
+        print_json(
+            {
+                "mode": payload.get("mode"),
+                "objective": payload.get("objective"),
+                "safety": payload.get("safety"),
+                "inputs": payload.get("inputs"),
+                "outcome": payload.get("outcome"),
+                "status_counts": payload.get("status_counts"),
+                "symbols": [
+                    {
+                        "symbol": item.get("symbol"),
+                        "outcome": item.get("outcome"),
+                        "route_id": ((item.get("route") or {}).get("route") or {}).get("route_id")
+                        if isinstance(item.get("route"), dict)
+                        else None,
+                        "candidate_keys": item.get("candidate_keys"),
+                        "near_ready_candidate_keys": item.get("near_ready_candidate_keys"),
+                        "ready_candidate_keys": item.get("ready_candidate_keys"),
+                        "next_command": item.get("next_command"),
+                    }
+                    for item in payload.get("symbols") or []
+                    if isinstance(item, dict)
+                ],
+                "sentinel": payload.get("sentinel"),
+                "research_sweep_count": len(payload.get("research_sweeps") or []),
+                "risk_combo_matrix": payload.get("risk_combo_matrix"),
+                "readiness": payload.get("readiness"),
+                "promotion_boundary": payload.get("promotion_boundary"),
+                "report_path": payload.get("report_path"),
+            },
+            compact=True,
+        )
+        return
+    print_json(payload)
 
 
 def cmd_mission(args: argparse.Namespace) -> None:
@@ -2615,6 +2665,29 @@ def build_parser() -> argparse.ArgumentParser:
     route_intent = sub.add_parser("route-intent", help="Map an operator message into the trading workflow action lane")
     route_intent.add_argument("message")
     route_intent.set_defaults(func=cmd_route_intent)
+
+    new_symbol_workflow = sub.add_parser(
+        "new-symbol-workflow",
+        help="Run the fixed no-code workflow from new symbol to research/testnet readiness without opening orders",
+    )
+    new_symbol_workflow.add_argument("--symbols", required=True, help="Comma-separated symbol list, e.g. SOLUSDT,TRXUSDT")
+    new_symbol_workflow.add_argument("--intervals", default="15m,4h,1d")
+    new_symbol_workflow.add_argument("--sides", default="BUY,SELL")
+    new_symbol_workflow.add_argument("--research-depth", choices=("none", "smoke", "focused"), default="smoke")
+    new_symbol_workflow.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Emit the fixed workflow plan and cheap gates without running research sweeps.",
+    )
+    new_symbol_workflow.add_argument("--strategy-config", default=str(CONFIG_DIR / "strategy-live-pilot.yaml"))
+    new_symbol_workflow.add_argument(
+        "--blueprint-config",
+        default=str(CONFIG_DIR / "professional-system-blueprint.default.yaml"),
+    )
+    new_symbol_workflow.add_argument("--max-readiness-candidates", type=int, default=6)
+    new_symbol_workflow.add_argument("--output-dir", default="")
+    new_symbol_workflow.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
+    new_symbol_workflow.set_defaults(func=cmd_new_symbol_workflow)
 
     mission = sub.add_parser("mission", help="Run one-command symbol-scoped strategy convergence automation")
     mission.add_argument("--symbols", required=True, help="Comma-separated symbol list, e.g. BTCUSDT,ETHUSDT,XAU")

@@ -96,23 +96,21 @@ intents:
       - 客戶交付
       - 完美嵌入hermes
       - 完美欠入hermes
-    summary: Route a new symbol through the full evidence-first trade pipeline.
+    summary: Route a new symbol through the fixed no-code evidence-first trade pipeline.
     operator_prompt: >
-      Treat the requested symbol as a candidate, not as a trade. Run the
-      evidence-first pipeline from symbol routing, feature dataset, expectancy
-      research, risk-combo matrix, Hermes AI Trader gate, AI readiness scan,
-      decision contract, decision audit, and operator dashboard. Keep mainnet
-      disabled, keep HOLD legal, and optimize only the layer that blocks.
+      Treat the requested symbol as a candidate, not as a trade. Prefer
+      new-symbol-workflow first so adding a coin means running the fixed
+      workflow, not writing symbol-specific Python code. The workflow may run
+      symbol routing, bounded BUY/SELL expectancy research, risk-combo matrix,
+      Hermes AI Trader gate, AI readiness scan, and operator dashboard. Keep
+      mainnet disabled, keep HOLD legal, and optimize only the layer that
+      blocks.
     actions:
+      - new-symbol-workflow
       - route-symbol
-      - feature-dataset
-      - alpha-research
       - risk-combo-sweep
       - risk-combo-matrix
-      - hermes-ai-trader
       - ai-readiness-scan
-      - trade-decision
-      - decision-audit
       - operator-dashboard
     resources:
       - docs/workflows/new-symbol-to-trade-pipeline.md
