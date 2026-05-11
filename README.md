@@ -95,6 +95,15 @@ openclaw-quantctl ai-readiness-scan --compact
 openclaw-quantctl operator-dashboard --compact
 ```
 
+Long risk-combo validation runs:
+
+```bash
+python3 scripts/run_offline_risk_validation.py start --symbols TRXUSDT --target-side BUY --target-interval 1d
+python3 scripts/run_offline_risk_validation.py status
+```
+
+The offline runner only writes local research evidence under `state/`; it does not open orders, change execution config, or enable mainnet.
+
 Hermes trade cycle dry run:
 
 ```bash
