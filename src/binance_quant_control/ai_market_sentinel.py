@@ -283,6 +283,15 @@ def _format_price_list(values: list[Any]) -> str:
     return ", ".join(prices) if prices else "n/a"
 
 
+def _format_value(value: Any, *, suffix: str = "") -> str:
+    numeric = _float(value)
+    if numeric > 0:
+        return f"{numeric:g}{suffix}"
+    if value not in (None, ""):
+        return f"{value}{suffix}"
+    return "n/a"
+
+
 def _reason_lines(
     *,
     candidate: dict[str, Any],
@@ -353,6 +362,9 @@ def _build_conditional_order_alert(
                 "blocker_classes": near_ready.get("blocker_classes") or [],
                 "expectancy_metrics": metrics,
                 "risk_metrics": risk,
+                "condition_entry_price": None,
+                "stop_loss_price": None,
+                "take_profit_prices": [],
                 "why_watch": [
                     f"PF={metrics.get('profit_factor')}",
                     f"expectancy_R={metrics.get('expectancy_r')}",
@@ -431,13 +443,17 @@ def format_conditional_order_telegram(alert: dict[str, Any]) -> str:
         return f"AI Trader 條件單掃描：暫無可執行候選\nblockers: {blockers}"
     if alert.get("alert_type") == "near_ready_market_state_watch":
         metrics = _first_dict(alert.get("expectancy_metrics"))
+        risk = _first_dict(alert.get("risk_metrics"))
         blockers = ", ".join(str(item) for item in alert.get("blocker_classes") or []) or "market_state"
         why = "\n".join(f"- {item}" for item in (alert.get("why_watch") or [])[:8])
         lines = [
             "AI Trader 近開單候選",
-            f"{alert.get('symbol')} {alert.get('action')} ({alert.get('side')}) {alert.get('interval')}",
+            f"方向: {alert.get('symbol')} {alert.get('action')} ({alert.get('side')}) {alert.get('interval')}",
+            "狀態: near-ready，尚未允許下單",
             f"目前阻擋: {blockers}",
+            "條件單價格: 尚無 execution ticket，進場價/止損/止盈未生效",
             f"PF: {metrics.get('profit_factor')} | expectancy_R: {metrics.get('expectancy_r')} | payoff: {metrics.get('payoff_ratio')}",
+            f"樣本: {metrics.get('sample_count')} | R:R: {risk.get('reward_risk')}",
             "為甚要監控:",
             why,
             f"預檢: {alert.get('preflight_command')}",
@@ -448,15 +464,18 @@ def format_conditional_order_telegram(alert: dict[str, Any]) -> str:
     reason_text = "\n".join(f"- {item}" for item in reasons[:8]) if reasons else "- readiness gate passed"
     lines = [
         "AI Trader 條件單候選",
-        f"{alert.get('symbol')} {alert.get('action')} ({alert.get('side')}) {alert.get('market')} {alert.get('interval')}",
-        f"條件進場價: {alert.get('condition_entry_price'):g}",
-        f"止損價: {alert.get('stop_loss_price'):g}",
+        f"方向: {alert.get('symbol')} {alert.get('action')} ({alert.get('side')}) {alert.get('market')} {alert.get('interval')}",
+        "狀態: readiness passed，等待 operator/testnet execute",
+        f"條件進場價: {_format_value(alert.get('condition_entry_price'))}",
+        f"止損價: {_format_value(alert.get('stop_loss_price'))}",
         f"分批止盈: {_format_price_list(alert.get('take_profit_prices') or [])}",
-        f"最高安全槓桿: {alert.get('max_safe_leverage')}x",
-        f"數量: {alert.get('quantity')} | 保證金: {alert.get('margin_notional_usdt')} USDT | 名目: {alert.get('gross_notional_usdt')} USDT",
+        f"最高安全槓桿: {_format_value(alert.get('max_safe_leverage'), suffix='x')}",
+        f"數量: {alert.get('quantity')} | 保證金: {_format_value(alert.get('margin_notional_usdt'), suffix=' USDT')} | 名目: {_format_value(alert.get('gross_notional_usdt'), suffix=' USDT')}",
         f"計畫風險: {alert.get('planned_account_risk_pct')} | TP1 R:R: {alert.get('risk_reward_to_tp1')}",
         "為甚可以入場:",
         reason_text,
+        f"預檢: {alert.get('preflight_command')}",
+        f"Testnet 執行: {alert.get('operator_testnet_execute_command')}",
         "邊界: 只通知，未送出訂單；執行前仍需 readiness / operator execute。",
     ]
     return "\n".join(lines)[:TELEGRAM_MAX_MESSAGE_CHARS]

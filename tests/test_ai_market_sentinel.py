@@ -198,7 +198,13 @@ def test_ai_market_sentinel_allows_expansion_when_positions_below_cap(
     assert alert["max_safe_leverage"] == 3
     assert alert["execution_boundary"] == "notification_only_no_orders_sent"
     assert "AI Trader 條件單候選" in payload["telegram_text"]
+    assert "方向: SOLUSDT 做多 (BUY) futures 15m" in payload["telegram_text"]
+    assert "狀態: readiness passed，等待 operator/testnet execute" in payload["telegram_text"]
     assert "條件進場價: 180" in payload["telegram_text"]
+    assert "止損價: 174" in payload["telegram_text"]
+    assert "分批止盈: 186, 192, 204" in payload["telegram_text"]
+    assert "最高安全槓桿: 3x" in payload["telegram_text"]
+    assert "Testnet 執行: openclaw-quantctl live-pilot --symbol SOLUSDT --execute --compact" in payload["telegram_text"]
 
 
 def test_ai_market_sentinel_blocks_expansion_at_four_positions(monkeypatch, tmp_path: Path) -> None:
@@ -390,6 +396,9 @@ def test_ai_market_sentinel_notifies_near_ready_market_watch(monkeypatch, tmp_pa
     assert payload["readiness"]["near_ready_count"] == 1
     assert payload["conditional_order_alert"]["alert_type"] == "near_ready_market_state_watch"
     assert payload["telegram"]["sent"] is True
-    assert "TRXUSDT 做多" in sent["text"]
+    assert "方向: TRXUSDT 做多 (BUY) 1d" in sent["text"]
+    assert "狀態: near-ready，尚未允許下單" in sent["text"]
+    assert "條件單價格: 尚無 execution ticket，進場價/止損/止盈未生效" in sent["text"]
     assert "目前阻擋: market_state" in sent["text"]
+    assert "樣本: 76 | R:R: 2.94" in sent["text"]
     assert payload["machine_action_queue"][0]["action"] == "monitor_near_ready_market_state"
