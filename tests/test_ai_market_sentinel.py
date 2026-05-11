@@ -328,3 +328,68 @@ def test_ai_market_sentinel_sends_telegram_only_for_ready_candidate(monkeypatch,
     assert payload["telegram"]["sent"] is True
     assert "ETHUSDT 做空" in sent["text"]
     assert "止損價: 3060" in sent["text"]
+
+
+def test_ai_market_sentinel_notifies_near_ready_market_watch(monkeypatch, tmp_path: Path) -> None:
+    class FlatClient(FakeClient):
+        def positions(self, symbol=None):
+            return []
+
+    sent: dict[str, str] = {}
+    monkeypatch.setattr(sentinel, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(sentinel, "load_settings", lambda: FakeSettings())
+    monkeypatch.setattr(sentinel, "BinanceClient", FlatClient)
+    monkeypatch.setattr(sentinel, "load_trading_control_state", lambda: TradingControlState())
+    monkeypatch.setattr(sentinel, "load_route_risk_state", lambda: {"active_quarantined_routes": [], "routes": {}})
+
+    def fake_send_telegram(text: str) -> dict[str, object]:
+        sent["text"] = text
+        return {"sent": True}
+
+    monkeypatch.setattr(sentinel, "send_telegram_text", fake_send_telegram)
+    monkeypatch.setattr(
+        sentinel,
+        "run_ai_readiness_scan",
+        lambda **kwargs: {
+            "candidate_count": 4,
+            "allowed_count": 0,
+            "selected_ready_candidate": None,
+            "execution_ticket": None,
+            "next_machine_action": "wait_for_market_state",
+            "research_candidate_report": {
+                "near_ready_count": 1,
+                "near_ready_candidates": [
+                    {
+                        "symbol": "TRXUSDT",
+                        "side": "BUY",
+                        "interval": "1d",
+                        "route_id": "trx-mean-reversion",
+                        "blocker_classes": ["market_state"],
+                        "expectancy_metrics": {
+                            "profit_factor": 1.9907,
+                            "expectancy_r": 0.4666,
+                            "payoff_ratio": 2.8897,
+                            "sample_count": 76,
+                        },
+                        "risk_metrics": {"reward_risk": 2.94},
+                    }
+                ],
+            },
+        },
+    )
+
+    payload = sentinel.run_ai_market_sentinel(
+        symbols=["TRXUSDT"],
+        limit=80,
+        output_dir=tmp_path,
+        send_telegram=True,
+        max_readiness_candidates=2,
+    )
+
+    assert payload["readiness"]["allowed_count"] == 0
+    assert payload["readiness"]["near_ready_count"] == 1
+    assert payload["conditional_order_alert"]["alert_type"] == "near_ready_market_state_watch"
+    assert payload["telegram"]["sent"] is True
+    assert "TRXUSDT 做多" in sent["text"]
+    assert "目前阻擋: market_state" in sent["text"]
+    assert payload["machine_action_queue"][0]["action"] == "monitor_near_ready_market_state"

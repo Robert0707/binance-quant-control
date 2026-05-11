@@ -188,6 +188,10 @@ def _build_machine_action_queue(
     position_overlays: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
+    research_report = readiness.get("research_candidate_report") if isinstance(readiness.get("research_candidate_report"), dict) else {}
+    near_ready_candidates = [
+        item for item in (research_report.get("near_ready_candidates") or []) if isinstance(item, dict)
+    ]
     if positions:
         actions.append(
             {
@@ -199,7 +203,30 @@ def _build_machine_action_queue(
                 "position_overlays": position_overlays,
             }
         )
-    if "no-readiness-approved-candidate" in expansion_gate.get("blockers", []):
+    if near_ready_candidates:
+        actions.append(
+            {
+                "priority": 25,
+                "action": "monitor_near_ready_market_state",
+                "reason": "positive-expectancy-candidate-waiting-for-market-state",
+                "candidates": [
+                    {
+                        "symbol": item.get("symbol"),
+                        "side": item.get("side"),
+                        "interval": item.get("interval"),
+                        "route_id": item.get("route_id"),
+                        "blocker_classes": item.get("blocker_classes"),
+                        "expectancy_metrics": item.get("expectancy_metrics"),
+                    }
+                    for item in near_ready_candidates[:5]
+                ],
+                "command": (
+                    "openclaw-quantctl ai-readiness-scan --execution-mode testnet_exploration "
+                    "--max-candidates 2 --compact"
+                ),
+            }
+        )
+    if "no-readiness-approved-candidate" in expansion_gate.get("blockers", []) and not near_ready_candidates:
         actions.append(
             {
                 "priority": 30,
@@ -307,6 +334,38 @@ def _build_conditional_order_alert(
     ticket = _first_dict(readiness.get("execution_ticket"))
     live_plan = _first_dict(candidate.get("live_plan"))
     if not candidate or not ticket or not live_plan:
+        research_report = readiness.get("research_candidate_report") if isinstance(readiness.get("research_candidate_report"), dict) else {}
+        near_ready = _first_dict(*[item for item in (research_report.get("near_ready_candidates") or []) if isinstance(item, dict)])
+        if near_ready:
+            symbol = str(near_ready.get("symbol") or "").upper()
+            side = str(near_ready.get("side") or "").upper()
+            action = "做多" if side == "BUY" else "做空"
+            metrics = _first_dict(near_ready.get("expectancy_metrics"))
+            risk = _first_dict(near_ready.get("risk_metrics"))
+            return {
+                "should_notify": True,
+                "alert_type": "near_ready_market_state_watch",
+                "symbol": symbol,
+                "action": action,
+                "side": side,
+                "interval": near_ready.get("interval"),
+                "route_id": near_ready.get("route_id"),
+                "blocker_classes": near_ready.get("blocker_classes") or [],
+                "expectancy_metrics": metrics,
+                "risk_metrics": risk,
+                "why_watch": [
+                    f"PF={metrics.get('profit_factor')}",
+                    f"expectancy_R={metrics.get('expectancy_r')}",
+                    f"payoff={metrics.get('payoff_ratio')}",
+                    f"sample={metrics.get('sample_count')}",
+                    "目前只差 market_state；未產生 execution ticket。",
+                ],
+                "preflight_command": (
+                    f"openclaw-quantctl live-readiness --symbol {symbol} --side {side} "
+                    f"--interval {near_ready.get('interval')} --execution-mode testnet_exploration --compact"
+                ),
+                "execution_boundary": "notification_only_no_orders_sent",
+            }
         return {
             "should_notify": False,
             "reason": "no-readiness-approved-candidate",
@@ -370,6 +429,21 @@ def format_conditional_order_telegram(alert: dict[str, Any]) -> str:
     if not alert.get("should_notify"):
         blockers = ", ".join(str(item) for item in alert.get("blockers") or []) or str(alert.get("reason") or "blocked")
         return f"AI Trader 條件單掃描：暫無可執行候選\nblockers: {blockers}"
+    if alert.get("alert_type") == "near_ready_market_state_watch":
+        metrics = _first_dict(alert.get("expectancy_metrics"))
+        blockers = ", ".join(str(item) for item in alert.get("blocker_classes") or []) or "market_state"
+        why = "\n".join(f"- {item}" for item in (alert.get("why_watch") or [])[:8])
+        lines = [
+            "AI Trader 近開單候選",
+            f"{alert.get('symbol')} {alert.get('action')} ({alert.get('side')}) {alert.get('interval')}",
+            f"目前阻擋: {blockers}",
+            f"PF: {metrics.get('profit_factor')} | expectancy_R: {metrics.get('expectancy_r')} | payoff: {metrics.get('payoff_ratio')}",
+            "為甚要監控:",
+            why,
+            f"預檢: {alert.get('preflight_command')}",
+            "邊界: 只通知，未送出訂單；必須等 readiness allowed=true 才能執行。",
+        ]
+        return "\n".join(lines)[:TELEGRAM_MAX_MESSAGE_CHARS]
     reasons = [str(item) for item in alert.get("why_enter") or []]
     reason_text = "\n".join(f"- {item}" for item in reasons[:8]) if reasons else "- readiness gate passed"
     lines = [
@@ -523,6 +597,16 @@ def run_ai_market_sentinel(
         "readiness": {
             "candidate_count": readiness.get("candidate_count"),
             "allowed_count": readiness.get("allowed_count"),
+            "near_ready_count": (
+                (readiness.get("research_candidate_report") or {}).get("near_ready_count")
+                if isinstance(readiness.get("research_candidate_report"), dict)
+                else 0
+            ),
+            "near_ready_candidates": (
+                (readiness.get("research_candidate_report") or {}).get("near_ready_candidates")
+                if isinstance(readiness.get("research_candidate_report"), dict)
+                else []
+            ),
             "selected_ready_candidate": readiness.get("selected_ready_candidate"),
             "next_machine_action": readiness.get("next_machine_action"),
             "hard_blocker_taxonomy": readiness.get("hard_blocker_taxonomy"),

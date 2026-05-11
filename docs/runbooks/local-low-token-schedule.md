@@ -10,6 +10,12 @@ Purpose: keep the Binance quant stack running locally without spending chat/mode
   - Role: read-only position, trend, quarantine, and expansion-gate watch.
   - Cost profile: low; no readiness scan, no model call, no execution.
 
+- Near-ready readiness watch
+  - Frequency: every 5-15 minutes, or run manually while a near-ready candidate exists.
+  - Command: `ai-market-sentinel --max-readiness-candidates 2 --compact`
+  - Role: low-cost scan of promoted risk-combo / Hermes candidates so market-state-only blockers are detected quickly.
+  - Cost profile: low-medium; scans only the first readiness candidates and still opens no orders.
+
 - `openclaw-binance-position-guardian.timer`
   - Frequency: every 5 minutes.
   - Role: local position protection and adaptive exit checks.
@@ -60,13 +66,15 @@ openclaw-quantctl trading-control-status --compact
 openclaw-quantctl positions --compact
 openclaw-quantctl route-risk-status --compact
 openclaw-quantctl ai-market-sentinel --skip-readiness --compact
+openclaw-quantctl ai-market-sentinel --max-readiness-candidates 2 --compact
 openclaw-quantctl ai-market-sentinel --max-readiness-candidates 6 --compact
 ```
 
-Use `--send-telegram` only for manual/full sentinel checks where a
-readiness-approved conditional-order candidate should be pushed to Telegram.
-High-frequency timer mode should keep `--skip-readiness` to avoid unnecessary
-candidate rescans.
+Use `--send-telegram` only for manual/full sentinel checks where a readiness-approved
+conditional-order candidate or near-ready market-state watch should be pushed to
+Telegram. High-frequency timer mode can keep `--skip-readiness`; near-ready mode
+should use `--max-readiness-candidates 2` so it does not miss promoted
+risk-combo candidates such as `TRXUSDT BUY 1d`.
 
 ## Heavy Research
 
