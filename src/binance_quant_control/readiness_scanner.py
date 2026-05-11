@@ -16,6 +16,7 @@ from .skipped_signal_journal import append_skipped_signal
 from .strategy import load_strategy_config
 
 READINESS_SCAN_DIR = STATE_DIR / "hermes-readiness-scan"
+RISK_COMBO_MATRIX_DIR = STATE_DIR / "risk-combo-matrix"
 DEFAULT_SCANNER_STRATEGY_CONFIG = CONFIG_DIR / "strategy-live-pilot.yaml"
 ACTION_PRIORITY = {
     "execute_ready_dry_run_only": 0,
@@ -65,6 +66,10 @@ RESEARCH_SMOKE_SWEEP = {
     "max_walk_forward_validations": 1,
     "top_n": 5,
 }
+RISK_COMBO_READINESS_STATUSES = {
+    "promising_but_under_validated",
+    "robust_research_candidate_found",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +105,108 @@ def _stamp() -> str:
 def _signal_from_queue_item(item: dict[str, Any]) -> dict[str, Any]:
     signal = item.get("signal") if isinstance(item.get("signal"), dict) else {}
     return signal
+
+
+def _latest_json_report(root: Path, pattern: str) -> tuple[dict[str, Any], str]:
+    candidates = sorted(
+        root.glob(pattern) if root.exists() else [],
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return {}, ""
+    latest = candidates[0]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, str(latest)
+    return payload if isinstance(payload, dict) else {}, str(latest)
+
+
+def _risk_combo_surface_key(surface: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(surface.get("symbol") or "").upper(),
+        str(surface.get("target_side") or "").upper(),
+        str(surface.get("target_interval") or ""),
+    )
+
+
+def _risk_combo_surface_to_queue_item(
+    surface: dict[str, Any],
+    *,
+    rank: int,
+    matrix_path: str,
+) -> dict[str, Any] | None:
+    symbol, side, interval = _risk_combo_surface_key(surface)
+    if not symbol or side not in {"BUY", "SELL"} or not interval:
+        return None
+    status = str(surface.get("research_status") or "")
+    if status not in RISK_COMBO_READINESS_STATUSES and not surface.get("robust_recovery_gate_passed"):
+        return None
+    route_id = str(surface.get("route_id") or "risk-combo-research")
+    return {
+        "rank": rank,
+        "signal": {
+            "symbol": symbol,
+            "side": side,
+            "interval": interval,
+            "strategy_family": "risk_combo_matrix",
+            "route_id": route_id,
+            "source": "risk_combo_matrix",
+            "risk_combo_research_status": status,
+            "risk_combo_source_report_path": surface.get("source_report_path"),
+            "risk_combo_matrix_path": matrix_path,
+        },
+        "machine_state": "candidate_ready",
+        "open_order_gate": {"allowed": True, "blockers": []},
+        "source": "risk_combo_matrix",
+    }
+
+
+def _risk_combo_matrix_queue_items(
+    *,
+    existing_keys: set[tuple[str, str, str]],
+    matrix_dir: Path | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    matrix_payload, matrix_path = _latest_json_report(
+        matrix_dir or RISK_COMBO_MATRIX_DIR,
+        "*-risk-combo-matrix.json",
+    )
+    if not matrix_payload:
+        return [], matrix_path
+
+    raw_surfaces: list[dict[str, Any]] = []
+    best_surface = matrix_payload.get("best_surface")
+    if isinstance(best_surface, dict):
+        raw_surfaces.append(best_surface)
+    for section_name in ("side_summary", "horizon_summary"):
+        section = matrix_payload.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for row in section.values():
+            if not isinstance(row, dict):
+                continue
+            for key in ("best_surface", "best_emerging_surface"):
+                surface = row.get(key)
+                if isinstance(surface, dict):
+                    raw_surfaces.append(surface)
+
+    seen = set(existing_keys)
+    queue_items: list[dict[str, Any]] = []
+    for surface in raw_surfaces:
+        surface_key = _risk_combo_surface_key(surface)
+        if surface_key in seen:
+            continue
+        item = _risk_combo_surface_to_queue_item(
+            surface,
+            rank=500 + len(queue_items),
+            matrix_path=matrix_path,
+        )
+        if item is None:
+            continue
+        seen.add(surface_key)
+        queue_items.append(item)
+    return queue_items, matrix_path
 
 
 def _json_safe(value: Any) -> Any:
@@ -911,6 +1018,16 @@ def run_ai_readiness_scan(
     )
     queue = [item for item in hermes_payload.get("candidate_queue") or [] if isinstance(item, dict)]
     queue.sort(key=lambda item: int(item.get("rank") or 999999))
+    existing_keys = {
+        (
+            str(_signal_from_queue_item(item).get("symbol") or "").upper(),
+            str(_signal_from_queue_item(item).get("side") or "").upper(),
+            str(_signal_from_queue_item(item).get("interval") or ""),
+        )
+        for item in queue
+    }
+    risk_combo_queue, risk_combo_matrix_path = _risk_combo_matrix_queue_items(existing_keys=existing_keys)
+    queue.extend(risk_combo_queue)
     selected_queue: list[dict[str, Any]] = []
     live_scan_count = 0
     for item in queue:
@@ -1009,6 +1126,8 @@ def run_ai_readiness_scan(
         "denial_journal_count": denial_journal_count,
         "scan_results": [item.to_dict() for item in results],
         "hermes_ai_trader_report": hermes_payload.get("report_path"),
+        "risk_combo_matrix_report": risk_combo_matrix_path or None,
+        "risk_combo_matrix_candidate_count": len(risk_combo_queue),
     })
     report_path = root_dir / f"{_stamp()}-hermes-readiness-scan.json"
     report_path.write_text(

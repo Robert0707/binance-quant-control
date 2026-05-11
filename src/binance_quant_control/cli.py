@@ -2105,6 +2105,8 @@ def cmd_ai_readiness_scan(args: argparse.Namespace) -> None:
                 "next_machine_action": payload.get("next_machine_action"),
                 "machine_action_queue": payload.get("machine_action_queue"),
                 "research_candidate_report": payload.get("research_candidate_report"),
+                "risk_combo_matrix_candidate_count": payload.get("risk_combo_matrix_candidate_count"),
+                "risk_combo_matrix_report": payload.get("risk_combo_matrix_report"),
                 "hard_blocker_classes": sorted((payload.get("hard_blocker_taxonomy") or {}).keys()),
                 "denial_journal_path": payload.get("denial_journal_path"),
                 "denial_journal_count": payload.get("denial_journal_count"),

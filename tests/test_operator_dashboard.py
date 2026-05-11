@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import binance_quant_control.operator_dashboard as dashboard
@@ -564,6 +565,8 @@ def test_operator_dashboard_embeds_latest_risk_combo_matrix_summary(monkeypatch,
     )
     sweep_path = sweep_dir / "20260510T080000Z-risk-combo-sweep.json"
     sweep_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    os.utime(sweep_path, (1_778_378_400, 1_778_378_400))
+    os.utime(matrix_path, (1_778_378_800, 1_778_378_800))
     readiness_dir = tmp_path / "hermes-readiness-scan"
     readiness_dir.mkdir()
     readiness_path = readiness_dir / "20260510T080500Z-hermes-readiness-scan.json"
