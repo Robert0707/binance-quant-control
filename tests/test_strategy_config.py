@@ -10,7 +10,7 @@ def test_load_live_pilot_strategy_uses_near_micro_profile():
     assert config.defaults.symbol == "NEARUSDT"
     assert config.defaults.interval == "4h"
     assert config.risk.default_leverage == 6
-    assert config.risk.max_leverage == 30
+    assert config.risk.max_leverage == 125
     assert config.execution.margin_notional_usdt == 2.0
     assert config.challenge.enabled is True
     assert config.challenge.target_multiple == 2.0

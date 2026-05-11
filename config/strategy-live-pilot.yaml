@@ -14,7 +14,7 @@ defaults:
 risk:
   max_account_risk_pct: 0.006
   default_leverage: 6
-  max_leverage: 30
+  max_leverage: 125
   max_notional_pct: 0.18
   max_daily_trades: 3
   min_balance_usdt: 2.0
