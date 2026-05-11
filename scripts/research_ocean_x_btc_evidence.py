@@ -44,7 +44,7 @@ BINANCE_FAPI_KLINES_URL = (
 )
 CORE_WHALE_JUMP_SYMBOLS = ("BTCUSDT", "ETHUSDT", "XAUTUSDT")
 BTC_ETH_TRADINGVIEW_SYMBOLS = ("BTCUSDT", "ETHUSDT")
-REGIME_FILTERS = ("none", "trend", "pullback", "liquidity", "range", "strong_flow")
+REGIME_FILTERS = ("none", "trend", "pullback", "liquidity", "range", "strong_flow", "quality_flow", "trend_flow")
 TRADINGVIEW_SIGNAL_FAMILIES = (
     "tv_supertrend_macd",
     "tv_stoch_rsi_pullback",
@@ -53,6 +53,7 @@ TRADINGVIEW_SIGNAL_FAMILIES = (
     "banker_flow_proxy",
 )
 GATE_MODES = ("strict_win_rate", "expectancy")
+SIDE_FILTERS = ("both", "long", "short")
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +375,10 @@ class OceanProxyParams:
     fee_bps: float
     slippage_bps: float
     regime_filter: str = "none"
+    cooldown_bars_after_loss: int = 0
+    breakeven_trigger_r: float = 0.0
+    min_entry_stoch: float = 0.0
+    max_entry_stoch: float = 100.0
 
     def key(self) -> str:
         return (
@@ -382,7 +387,8 @@ class OceanProxyParams:
             f"ml{self.mfi_long:g}-ms{self.mfi_short:g}-jd{self.min_abs_jumbo_delta:g}-"
             f"adx{self.min_adx:g}-struct{int(self.require_structure)}-reg{int(self.allow_regular_signals)}-"
             f"sl{self.stop_loss_pct:g}-tp{self.take_profit_pct:g}-hold{self.max_hold_bars}-"
-            f"regime{self.regime_filter}"
+            f"cool{self.cooldown_bars_after_loss}-be{self.breakeven_trigger_r:g}-"
+            f"entryStoch{self.min_entry_stoch:g}-{self.max_entry_stoch:g}-regime{self.regime_filter}"
         )
 
 
@@ -413,6 +419,10 @@ class TradingViewConvergenceParams:
     require_structure: bool = False
     require_liquidity_reclaim: bool = False
     require_mfi: bool = False
+    cooldown_bars_after_loss: int = 0
+    breakeven_trigger_r: float = 0.0
+    min_entry_stoch: float = 0.0
+    max_entry_stoch: float = 100.0
 
     def key(self) -> str:
         return (
@@ -423,7 +433,9 @@ class TradingViewConvergenceParams:
             f"rsi{self.rsi_low:g}-{self.rsi_high:g}-stoch{self.stoch_low:g}-{self.stoch_high:g}-"
             f"bb{self.bb_low:g}-{self.bb_high:g}-vwap{int(self.require_vwap)}-"
             f"struct{int(self.require_structure)}-liq{int(self.require_liquidity_reclaim)}-"
-            f"mfi{int(self.require_mfi)}-regime{self.regime_filter}"
+            f"mfi{int(self.require_mfi)}-cool{self.cooldown_bars_after_loss}-"
+            f"be{self.breakeven_trigger_r:g}-entryStoch{self.min_entry_stoch:g}-{self.max_entry_stoch:g}-"
+            f"regime{self.regime_filter}"
         )
 
 
@@ -500,6 +512,11 @@ def _default_tradingview_param_grid(
         (1.2, 3.0, 48),
         (1.5, 3.0, 60),
         (1.8, 3.6, 72),
+        (0.8, 2.0, 36),
+        (1.0, 2.5, 48),
+        (1.3, 3.25, 72),
+        (1.6, 4.0, 96),
+        (2.0, 5.0, 120),
     )
     family_profiles: dict[str, tuple[dict[str, Any], ...]] = {
         "tv_supertrend_macd": (
@@ -535,13 +552,25 @@ def _default_tradingview_param_grid(
     }
     params: list[TradingViewConvergenceParams] = []
     for family, profiles in family_profiles.items():
-        for side, profile, (stop_loss_pct, take_profit_pct, max_hold_bars) in itertools.product(
+        for (
+            side,
+            profile,
+            (stop_loss_pct, take_profit_pct, max_hold_bars),
+            cooldown_bars_after_loss,
+            breakeven_trigger_r,
+            min_entry_stoch,
+        ) in itertools.product(
             ("long", "short"),
             profiles,
             exit_profiles,
+            (0, 4, 8, 12),
+            (0.0, 1.0, 1.5),
+            (0.0, 40.0, 50.0, 60.0),
         ):
             if stop_loss_pct > max_per_trade_risk_pct:
                 continue
+            max_entry_stoch = 100.0 if side == "long" else 100.0 - min_entry_stoch
+            normalized_min_entry_stoch = min_entry_stoch if side == "long" else 0.0
             params.append(
                 TradingViewConvergenceParams(
                     family=family,
@@ -551,6 +580,10 @@ def _default_tradingview_param_grid(
                     max_hold_bars=max_hold_bars,
                     fee_bps=4.0,
                     slippage_bps=2.0,
+                    cooldown_bars_after_loss=cooldown_bars_after_loss,
+                    breakeven_trigger_r=breakeven_trigger_r,
+                    min_entry_stoch=normalized_min_entry_stoch,
+                    max_entry_stoch=max_entry_stoch,
                     **profile,
                 )
             )
@@ -565,9 +598,184 @@ def _limit_tradingview_param_grid(
         return params
     if max_configs == 1:
         return [params[0]]
-    last = len(params) - 1
-    selected_indexes = sorted({round(idx * last / (max_configs - 1)) for idx in range(max_configs)})
-    return [params[idx] for idx in selected_indexes]
+
+    grouped: dict[tuple[Any, ...], list[TradingViewConvergenceParams]] = {}
+    for param in params:
+        profile_key = (
+            param.family,
+            param.side,
+            param.stop_loss_pct,
+            param.take_profit_pct,
+            param.max_hold_bars,
+            param.min_adx,
+            param.max_adx,
+            param.min_trend_votes,
+            param.min_volume_z,
+            param.min_volume_ratio,
+            param.min_abs_taker_flow,
+            param.min_abs_jumbo_delta,
+            param.require_vwap,
+            param.require_structure,
+            param.require_liquidity_reclaim,
+            param.require_mfi,
+            param.rsi_low,
+            param.rsi_high,
+            param.stoch_low,
+            param.stoch_high,
+            param.bb_low,
+            param.bb_high,
+        )
+        grouped.setdefault(profile_key, []).append(param)
+
+    for values in grouped.values():
+        values.sort(
+            key=lambda item: (
+                _risk_reward_ratio(item),
+                item.min_entry_stoch,
+                -item.max_entry_stoch,
+                item.breakeven_trigger_r,
+                -item.cooldown_bars_after_loss,
+            ),
+            reverse=True,
+        )
+
+    selected: list[TradingViewConvergenceParams] = []
+    seen: set[str] = set()
+
+    group_items = sorted(
+        grouped.items(),
+        key=lambda item: (
+            item[0][0],
+            item[0][1],
+            -_safe_ratio(item[0][3], item[0][2]),
+            -item[0][3],
+            item[0][2],
+            item[0][4],
+            item[0][5],
+            item[0][7],
+        ),
+    )
+    buckets: dict[tuple[str, str], list[tuple[tuple[Any, ...], list[TradingViewConvergenceParams]]]] = {}
+    for key, values in group_items:
+        buckets.setdefault((str(key[0]), str(key[1])), []).append((key, values))
+
+    ordered_bucket_keys = sorted(buckets)
+    per_bucket_floor = max(1, max_configs // max(len(ordered_bucket_keys), 1))
+
+    def add_param(param: TradingViewConvergenceParams) -> bool:
+        unique_key = param.key()
+        if unique_key in seen:
+            return False
+        selected.append(param)
+        seen.add(unique_key)
+        return len(selected) >= max_configs
+
+    for bucket_key in ordered_bucket_keys:
+        bucket_items = buckets[bucket_key]
+        picked_in_bucket = 0
+        max_depth = max(len(values) for _, values in bucket_items)
+        for depth in range(max_depth):
+            for _, values in bucket_items:
+                if depth >= len(values):
+                    continue
+                if add_param(values[depth]):
+                    return selected
+                picked_in_bucket += 1
+                if picked_in_bucket >= per_bucket_floor:
+                    break
+            if picked_in_bucket >= per_bucket_floor:
+                break
+
+    max_depth = max(len(values) for _, values in group_items)
+    for depth in range(max_depth):
+        for _, values in group_items:
+            if depth >= len(values):
+                continue
+            if add_param(values[depth]):
+                return selected
+    return selected
+
+
+def _normalize_side_filter(value: str) -> str:
+    normalized = str(value or "both").strip().lower()
+    if normalized not in SIDE_FILTERS:
+        raise ValueError(f"Unsupported side filter {value!r}; choose from {', '.join(SIDE_FILTERS)}.")
+    return normalized
+
+
+def _risk_reward_ratio(params: OceanProxyParams | TradingViewConvergenceParams) -> float:
+    return _safe_ratio(params.take_profit_pct, params.stop_loss_pct)
+
+
+def _limit_tradingview_shortlist(
+    shortlist: list[dict[str, Any]],
+    *,
+    max_items: int,
+    min_train_trades: int,
+    min_test_trades: int,
+) -> list[dict[str, Any]]:
+    if max_items <= 0 or len(shortlist) <= max_items:
+        return shortlist
+
+    def sample_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        counts = item.get("pre_screen") or {}
+        params = item["params"]
+        return (
+            int(counts.get("test_signals") or 0),
+            int(counts.get("train_signals") or 0),
+            int(counts.get("full_signals") or 0),
+            _risk_reward_ratio(params),
+            params.take_profit_pct,
+            -params.stop_loss_pct,
+        )
+
+    def payoff_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        counts = item.get("pre_screen") or {}
+        params = item["params"]
+        train_signals = int(counts.get("train_signals") or 0)
+        test_signals = int(counts.get("test_signals") or 0)
+        sample_coverage = min(train_signals / max(min_train_trades, 1), 1.0) + min(
+            test_signals / max(min_test_trades, 1),
+            1.0,
+        )
+        return (
+            _risk_reward_ratio(params),
+            params.take_profit_pct,
+            sample_coverage,
+            test_signals,
+            train_signals,
+            -params.stop_loss_pct,
+        )
+
+    sample_quota = max_items // 2
+    payoff_quota = max_items - sample_quota
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for quota, key in ((sample_quota, sample_key), (payoff_quota, payoff_key)):
+        picked = 0
+        for item in sorted(shortlist, key=key, reverse=True):
+            params = item["params"]
+            unique_key = f"{item['signal']}:{params.key()}"
+            if unique_key in seen:
+                continue
+            selected.append(item)
+            seen.add(unique_key)
+            picked += 1
+            if len(selected) >= max_items or picked >= quota:
+                break
+        if len(selected) >= max_items:
+            break
+    if len(selected) < max_items:
+        for item in sorted(shortlist, key=sample_key, reverse=True):
+            params = item["params"]
+            unique_key = f"{item['signal']}:{params.key()}"
+            if unique_key in seen:
+                continue
+            selected.append(item)
+            seen.add(unique_key)
+            if len(selected) >= max_items:
+                break
+    return selected
 
 
 def _parse_csv_items(value: str) -> list[str]:
@@ -625,6 +833,8 @@ def apply_regime_filter(features: pd.DataFrame, *, signal: str, regime_filter: s
     jumbo_power = _num_series(filtered, "jumbo_power")
     jumbo_ma = _num_series(filtered, "jumbo_power_ma")
     taker_flow = _num_series(filtered, "taker_flow_imbalance")
+    volume_z = _num_series(filtered, "volume_zscore_20")
+    volume_ratio = _num_series(filtered, "volume_ratio_20", 1.0)
     long_structure = _bool_series(filtered, "fib_pullback_long_zone") | _bool_series(
         filtered, "fib_ote_long_zone"
     )
@@ -684,6 +894,36 @@ def apply_regime_filter(features: pd.DataFrame, *, signal: str, regime_filter: s
             keep = signal_mask & (taker_flow >= 0.18) & (jumbo_power >= jumbo_ma)
         else:
             keep = signal_mask & (taker_flow <= -0.18) & (jumbo_power <= jumbo_ma)
+    elif mode == "quality_flow":
+        volume_confirmed = (volume_z >= 0.0) | (volume_ratio >= 1.12)
+        if long_side:
+            keep = signal_mask & volume_confirmed & (taker_flow >= 0.18) & (jumbo_power >= jumbo_ma)
+        else:
+            keep = signal_mask & volume_confirmed & (taker_flow <= -0.18) & (jumbo_power <= jumbo_ma)
+    elif mode == "trend_flow":
+        volume_confirmed = (volume_z >= -0.2) | (volume_ratio >= 1.08)
+        if long_side:
+            keep = (
+                signal_mask
+                & volume_confirmed
+                & (close > ema_slow)
+                & (ema_fast > ema_slow)
+                & (macd_hist >= 0.0)
+                & (plus_di >= minus_di)
+                & (taker_flow >= 0.14)
+                & (jumbo_power >= jumbo_ma)
+            )
+        else:
+            keep = (
+                signal_mask
+                & volume_confirmed
+                & (close < ema_slow)
+                & (ema_fast < ema_slow)
+                & (macd_hist <= 0.0)
+                & (minus_di >= plus_di)
+                & (taker_flow <= -0.14)
+                & (jumbo_power <= jumbo_ma)
+            )
     else:  # pragma: no cover - _normalize_regime_filters guards this.
         keep = signal_mask
 
@@ -1061,11 +1301,19 @@ def _simulate_signal_trades(
     high_values = pd.to_numeric(features["high"], errors="coerce").to_numpy(dtype=float)
     low_values = pd.to_numeric(features["low"], errors="coerce").to_numpy(dtype=float)
     close_values = pd.to_numeric(features["close"], errors="coerce").to_numpy(dtype=float)
+    stoch_values = (
+        pd.to_numeric(features.get("stoch_rsi_k", pd.Series(50.0, index=features.index)), errors="coerce")
+        .fillna(50.0)
+        .to_numpy(dtype=float)
+    )
     timestamps = features.index
     last_exit_idx = -1
     for signal_idx in signal_indexes:
         entry_idx = int(signal_idx) + 1
         if entry_idx >= len(features) or entry_idx <= last_exit_idx:
+            continue
+        entry_stoch = float(stoch_values[entry_idx])
+        if entry_stoch < params.min_entry_stoch or entry_stoch > params.max_entry_stoch:
             continue
         entry_price = float(open_values[entry_idx])
         if not math.isfinite(entry_price) or entry_price <= 0.0:
@@ -1082,26 +1330,35 @@ def _simulate_signal_trades(
         if not math.isfinite(exit_price) or exit_price <= 0.0:
             exit_price = entry_price
         exit_reason = "max_hold"
+        active_stop_price = stop_price
+        breakeven_armed = False
         for idx in range(entry_idx, max_exit_idx + 1):
             high = float(high_values[idx])
             low = float(low_values[idx])
             if not math.isfinite(high) or not math.isfinite(low):
                 continue
+            if params.breakeven_trigger_r > 0.0 and not breakeven_armed:
+                trigger_distance = entry_price * (params.stop_loss_pct / 100.0) * params.breakeven_trigger_r
+                trigger_price = entry_price + trigger_distance if direction > 0 else entry_price - trigger_distance
+                trigger_hit = high >= trigger_price if direction > 0 else low <= trigger_price
+                if trigger_hit:
+                    active_stop_price = entry_price
+                    breakeven_armed = True
             if direction > 0:
-                stop_hit = low <= stop_price
+                stop_hit = low <= active_stop_price
                 tp_hit = high >= tp_price
             else:
-                stop_hit = high >= stop_price
+                stop_hit = high >= active_stop_price
                 tp_hit = low <= tp_price
             if stop_hit and tp_hit:
                 exit_idx = idx
-                exit_price = stop_price
+                exit_price = active_stop_price
                 exit_reason = "stop_priority_same_bar"
                 break
             if stop_hit:
                 exit_idx = idx
-                exit_price = stop_price
-                exit_reason = "stop_loss"
+                exit_price = active_stop_price
+                exit_reason = "breakeven_stop" if breakeven_armed else "stop_loss"
                 break
             if tp_hit:
                 exit_idx = idx
@@ -1125,7 +1382,8 @@ def _simulate_signal_trades(
                 "bars_held": int(exit_idx - entry_idx + 1),
             }
         )
-        last_exit_idx = exit_idx
+        cooldown = params.cooldown_bars_after_loss if pnl_pct <= 0.0 else 0
+        last_exit_idx = exit_idx + max(int(cooldown), 0)
     return trades
 
 
@@ -1219,8 +1477,16 @@ def _evaluate_candidate(
                 **window_summary,
             }
         )
-    positive_windows = sum(1 for item in window_results if _safe_float(item.get("total_return_pct")) > 0.0)
     windows_with_sample = [item for item in window_results if int(item.get("trade_count") or 0) > 0]
+    required_positive_windows = math.ceil(walk_forward_windows * 0.67)
+    positive_windows = sum(1 for item in window_results if _safe_float(item.get("total_return_pct")) > 0.0)
+    positive_train_test_windows = sum(
+        1
+        for item in windows_with_sample
+        if int(item.get("trade_count") or 0) >= min_test_trades
+        and _profit_factor_value(item.get("profit_factor")) >= min_profit_factor
+        and _safe_float(item.get("expectancy_pct")) >= min_expectancy_pct
+    )
     min_window_win_rate = min((_safe_float(item.get("win_rate")) for item in windows_with_sample), default=0.0)
     min_window_profit_factor = min(
         (
@@ -1253,7 +1519,7 @@ def _evaluate_candidate(
         blockers.append("train-profit-factor-below-floor")
     if _safe_float(test["profit_factor"], 9999.0 if test["profit_factor"] == "inf" else 0.0) < min_profit_factor:
         blockers.append("test-profit-factor-below-floor")
-    if positive_windows < math.ceil(walk_forward_windows * 0.67):
+    if positive_windows < required_positive_windows:
         blockers.append("walk-forward-positive-window-count-too-low")
     if min_window_win_rate < max(55.0, target_win_rate - 15.0):
         blockers.append("walk-forward-min-win-rate-too-low")
@@ -1356,8 +1622,16 @@ def _evaluate_gate(
     max_loss_streak: int,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     mode = _normalize_gate_mode(gate_mode)
-    positive_windows = sum(1 for item in window_results if _safe_float(item.get("total_return_pct")) > 0.0)
     windows_with_sample = [item for item in window_results if int(item.get("trade_count") or 0) > 0]
+    required_positive_windows = math.ceil(walk_forward_windows * 0.67)
+    positive_windows = sum(1 for item in window_results if _safe_float(item.get("total_return_pct")) > 0.0)
+    positive_train_test_windows = sum(
+        1
+        for item in windows_with_sample
+        if int(item.get("trade_count") or 0) >= min_test_trades
+        and _profit_factor_value(item.get("profit_factor")) >= min_profit_factor
+        and _safe_float(item.get("expectancy_pct")) >= min_expectancy_pct
+    )
     min_window_win_rate = min((_safe_float(item.get("win_rate")) for item in windows_with_sample), default=0.0)
     min_window_profit_factor = min(
         (
@@ -1386,7 +1660,7 @@ def _evaluate_gate(
         blockers.append("test-profit-factor-below-floor")
     if full_profit_factor < min_profit_factor:
         blockers.append("full-profit-factor-below-floor")
-    if positive_windows < math.ceil(walk_forward_windows * 0.67):
+    if positive_windows < required_positive_windows:
         blockers.append("walk-forward-positive-window-count-too-low")
     if min_stop_loss_ratio is not None and test["stop_loss_ratio"] > min_stop_loss_ratio:
         blockers.append("test-stop-loss-ratio-above-floor")
@@ -1417,7 +1691,7 @@ def _evaluate_gate(
             blockers.append("test-loss-streak-above-ceiling")
         if full["max_loss_streak"] > max_loss_streak:
             blockers.append("full-loss-streak-above-ceiling")
-        if positive_expectancy_windows < math.ceil(walk_forward_windows * 0.67):
+        if positive_expectancy_windows < required_positive_windows:
             blockers.append("walk-forward-positive-expectancy-window-count-too-low")
         if min_window_expectancy < 0.0:
             blockers.append("walk-forward-min-expectancy-negative")
@@ -1436,6 +1710,7 @@ def _evaluate_gate(
     )
     diagnostics = {
         "positive_windows": positive_windows,
+        "positive_train_test_windows": positive_train_test_windows,
         "positive_expectancy_windows": positive_expectancy_windows,
         "windows_with_sample": len(windows_with_sample),
         "min_window_win_rate": round(min_window_win_rate, 2),
@@ -1526,6 +1801,7 @@ def _evaluate_candidate_from_full_trades(
         "walk_forward": {
             "window_count": walk_forward_windows,
             "positive_windows": gate_diagnostics["positive_windows"],
+            "positive_train_test_windows": gate_diagnostics["positive_train_test_windows"],
             "positive_expectancy_windows": gate_diagnostics["positive_expectancy_windows"],
             "sampled_windows": len(windows_with_sample),
             "mean_window_win_rate": round(mean(item["win_rate"] for item in windows_with_sample), 2)
@@ -1794,6 +2070,7 @@ def optimize_btc_eth_tradingview_convergence(
     min_payoff_ratio: float = 1.2,
     max_drawdown_pct: float = 20.0,
     max_loss_streak: int = 8,
+    side_filter: str = "both",
 ) -> dict[str, Any]:
     run_id = f"{_utc_stamp()}-btc-eth-tradingview-convergence"
     report_dir = output_dir or (PROJECT_ROOT / "reports" / run_id)
@@ -1807,6 +2084,7 @@ def optimize_btc_eth_tradingview_convergence(
     )
     selected_regime_filters = _normalize_regime_filters(regime_filters)
     selected_gate_mode = _normalize_gate_mode(gate_mode)
+    selected_side_filter = _normalize_side_filter(side_filter)
     source_manifest: dict[str, Any] = {
         "run_id": run_id,
         "symbols": clean_symbols,
@@ -1850,6 +2128,8 @@ def optimize_btc_eth_tradingview_convergence(
         for params in param_grid:
             signal = "L" if params.side == "long" else "S"
             base_signal_features = build_tradingview_signal_features(base_features, params=params)
+            if selected_side_filter != "both" and params.side != selected_side_filter:
+                continue
             for regime_filter in selected_regime_filters:
                 candidate_params = replace(params, regime_filter=regime_filter)
                 features = apply_regime_filter(
@@ -1895,7 +2175,12 @@ def optimize_btc_eth_tradingview_convergence(
         symbol_shortlist.sort(key=lambda item: item["sort_key"], reverse=True)
         if max_full_evaluations > 0:
             symbol_budget = max(1, math.ceil(max_full_evaluations / len(clean_symbols)))
-            symbol_shortlist = symbol_shortlist[:symbol_budget]
+            symbol_shortlist = _limit_tradingview_shortlist(
+                symbol_shortlist,
+                max_items=symbol_budget,
+                min_train_trades=min_train_trades,
+                min_test_trades=min_test_trades,
+            )
         for item in symbol_shortlist:
             base_signal_features = build_tradingview_signal_features(base_features, params=item["params"])
             features = apply_regime_filter(
@@ -2017,6 +2302,7 @@ def optimize_btc_eth_tradingview_convergence(
             "max_loss_streak": max_loss_streak,
             "min_dataset_bars": min_dataset_bars,
             "min_coverage_ratio": min_coverage_ratio,
+            "side_filter": selected_side_filter,
         },
         "grid": {
             "configs": len(param_grid),
@@ -2028,6 +2314,7 @@ def optimize_btc_eth_tradingview_convergence(
             "max_full_evaluations": max_full_evaluations,
             "train_signal_floor": train_signal_floor,
             "test_signal_floor": test_signal_floor,
+            "shortlist_policy": "sample_payoff_balanced",
         },
         "concept_sources": _tradingview_sources(),
         "family_notes": _tradingview_family_notes(),
@@ -2701,6 +2988,7 @@ def main() -> int:
     parser.add_argument("--min-payoff-ratio", type=float, default=1.2)
     parser.add_argument("--max-drawdown-pct", type=float, default=20.0)
     parser.add_argument("--max-loss-streak", type=int, default=8)
+    parser.add_argument("--side-filter", choices=SIDE_FILTERS, default="both")
     parser.add_argument("--min-dataset-bars", type=int, default=1000)
     parser.add_argument("--min-coverage-ratio", type=float, default=0.65)
     parser.add_argument("--regime-filters", default="none,trend,pullback,liquidity,range,strong_flow")
@@ -2737,6 +3025,7 @@ def main() -> int:
             min_payoff_ratio=args.min_payoff_ratio,
             max_drawdown_pct=args.max_drawdown_pct,
             max_loss_streak=args.max_loss_streak,
+            side_filter=args.side_filter,
         )
         print(
             json.dumps(

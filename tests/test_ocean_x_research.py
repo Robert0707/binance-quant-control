@@ -7,7 +7,13 @@ import pytest
 from scripts.research_ocean_x_btc_evidence import (
     TradingViewConvergenceParams,
     _dataset_quality,
+    _default_tradingview_param_grid,
+    _evaluate_gate,
+    _limit_tradingview_param_grid,
+    _limit_tradingview_shortlist,
     _normalize_regime_filters,
+    _normalize_side_filter,
+    _simulate_signal_trades,
     apply_regime_filter,
     build_tradingview_signal_features,
 )
@@ -104,3 +110,257 @@ def test_tradingview_supertrend_macd_builds_transparent_long_signal() -> None:
 
     assert features["ocean_proxy_signal"].tolist() == ["L", "", ""]
     assert features["tv_family"].tolist() == ["tv_supertrend_macd"] * 3
+
+
+def test_side_filter_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="Unsupported side filter"):
+        _normalize_side_filter("sideways")
+
+
+def test_tradingview_shortlist_keeps_payoff_shaped_configs() -> None:
+    low_payoff = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="short",
+        stop_loss_pct=1.3,
+        take_profit_pct=0.9,
+        max_hold_bars=18,
+        fee_bps=4.0,
+        slippage_bps=2.0,
+    )
+    high_payoff = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="short",
+        stop_loss_pct=1.0,
+        take_profit_pct=2.5,
+        max_hold_bars=48,
+        fee_bps=4.0,
+        slippage_bps=2.0,
+    )
+    shortlist = [
+        {
+            "signal": "S",
+            "params": low_payoff,
+            "pre_screen": {"train_signals": 200, "test_signals": 80, "full_signals": 280},
+        },
+        {
+            "signal": "S",
+            "params": high_payoff,
+            "pre_screen": {"train_signals": 90, "test_signals": 34, "full_signals": 124},
+        },
+    ]
+
+    limited = _limit_tradingview_shortlist(
+        shortlist,
+        max_items=2,
+        min_train_trades=70,
+        min_test_trades=30,
+    )
+
+    assert high_payoff in {item["params"] for item in limited}
+
+
+def test_tradingview_param_limit_keeps_entry_stoch_variants() -> None:
+    limited = _limit_tradingview_param_grid(
+        _default_tradingview_param_grid(max_per_trade_risk_pct=2.5),
+        max_configs=420,
+    )
+
+    assert any(
+        item.family == "tv_vwap_trend"
+        and item.side == "long"
+        and item.stop_loss_pct == 2.0
+        and item.take_profit_pct == 5.0
+        and item.min_entry_stoch == 60.0
+        for item in limited
+    )
+
+
+def test_expectancy_gate_reports_walk_forward_pf_sample_stability_without_blocking() -> None:
+    strong = {
+        "trade_count": 80,
+        "profit_factor": 1.4,
+        "expectancy_pct": 0.08,
+        "payoff_ratio": 1.4,
+        "max_drawdown_pct": 5.0,
+        "max_loss_streak": 3,
+        "stop_loss_ratio": 30.0,
+    }
+    passed, blockers, diagnostics = _evaluate_gate(
+        train=strong,
+        test=strong,
+        full=strong,
+        window_results=[
+            {"trade_count": 35, "profit_factor": 1.3, "expectancy_pct": 0.05, "total_return_pct": 2.0},
+            {"trade_count": 35, "profit_factor": 1.3, "expectancy_pct": 0.05, "total_return_pct": 2.0},
+            {"trade_count": 5, "profit_factor": 9.0, "expectancy_pct": 0.9, "total_return_pct": 4.0},
+            {"trade_count": 35, "profit_factor": 0.8, "expectancy_pct": -0.03, "total_return_pct": -1.0},
+        ],
+        walk_forward_windows=4,
+        gate_mode="expectancy",
+        target_win_rate=45,
+        min_train_trades=70,
+        min_test_trades=30,
+        min_profit_factor=1.2,
+        min_stop_loss_ratio=55,
+        min_expectancy_pct=0.03,
+        min_payoff_ratio=1.2,
+        max_drawdown_pct=20,
+        max_loss_streak=8,
+    )
+
+    assert passed is False
+    assert diagnostics["positive_train_test_windows"] == 2
+    assert "walk-forward-train-test-stability-too-low" not in blockers
+    assert "walk-forward-min-expectancy-negative" in blockers
+
+
+def test_expectancy_gate_does_not_require_every_window_to_meet_pf_sample_floor() -> None:
+    strong = {
+        "trade_count": 80,
+        "profit_factor": 1.4,
+        "expectancy_pct": 0.08,
+        "payoff_ratio": 1.4,
+        "max_drawdown_pct": 5.0,
+        "max_loss_streak": 3,
+        "stop_loss_ratio": 30.0,
+    }
+    passed, blockers, diagnostics = _evaluate_gate(
+        train=strong,
+        test=strong,
+        full=strong,
+        window_results=[
+            {"trade_count": 35, "profit_factor": 1.3, "expectancy_pct": 0.05, "total_return_pct": 2.0},
+            {"trade_count": 20, "profit_factor": 1.1, "expectancy_pct": 0.04, "total_return_pct": 1.0},
+            {"trade_count": 35, "profit_factor": 1.3, "expectancy_pct": 0.05, "total_return_pct": 2.0},
+            {"trade_count": 20, "profit_factor": 1.1, "expectancy_pct": 0.04, "total_return_pct": 1.0},
+        ],
+        walk_forward_windows=4,
+        gate_mode="expectancy",
+        target_win_rate=45,
+        min_train_trades=70,
+        min_test_trades=30,
+        min_profit_factor=1.2,
+        min_stop_loss_ratio=55,
+        min_expectancy_pct=0.03,
+        min_payoff_ratio=1.2,
+        max_drawdown_pct=20,
+        max_loss_streak=8,
+    )
+
+    assert passed is True
+    assert diagnostics["positive_train_test_windows"] == 2
+    assert "walk-forward-positive-window-count-too-low" not in blockers
+
+
+def test_loss_cooldown_declusters_repeated_failed_signals() -> None:
+    index = pd.date_range("2026-01-01", periods=8, freq="h", tz="UTC")
+    features = pd.DataFrame(
+        {
+            "ocean_proxy_signal": ["L", "L", "L", "L", "", "", "", ""],
+            "open": [100.0] * 8,
+            "high": [100.1] * 8,
+            "low": [98.5] * 8,
+            "close": [99.0] * 8,
+        },
+        index=index,
+    )
+    no_cooldown = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="long",
+        stop_loss_pct=1.0,
+        take_profit_pct=2.0,
+        max_hold_bars=1,
+        fee_bps=4.0,
+        slippage_bps=2.0,
+        cooldown_bars_after_loss=0,
+    )
+    cooldown = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="long",
+        stop_loss_pct=1.0,
+        take_profit_pct=2.0,
+        max_hold_bars=1,
+        fee_bps=4.0,
+        slippage_bps=2.0,
+        cooldown_bars_after_loss=2,
+    )
+
+    assert len(_simulate_signal_trades(features, signal="L", params=cooldown)) < len(
+        _simulate_signal_trades(features, signal="L", params=no_cooldown)
+    )
+
+
+def test_quality_flow_regime_requires_volume_and_flow_confirmation() -> None:
+    frame = _feature_frame()
+    frame.loc[frame.index[0], "volume_zscore_20"] = -0.5
+    frame.loc[frame.index[0], "volume_ratio_20"] = 1.0
+
+    filtered = apply_regime_filter(frame, signal="L", regime_filter="quality_flow")
+
+    assert filtered["ocean_proxy_signal"].tolist() == ["", "", "S"]
+
+
+def test_breakeven_trigger_reduces_full_stop_loss_after_favorable_move() -> None:
+    index = pd.date_range("2026-01-01", periods=4, freq="h", tz="UTC")
+    features = pd.DataFrame(
+        {
+            "ocean_proxy_signal": ["L", "", "", ""],
+            "open": [100.0, 100.0, 100.0, 100.0],
+            "high": [100.0, 101.2, 100.5, 100.0],
+            "low": [100.0, 99.8, 98.8, 100.0],
+            "close": [100.0, 100.2, 99.0, 100.0],
+        },
+        index=index,
+    )
+    params = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="long",
+        stop_loss_pct=1.0,
+        take_profit_pct=3.0,
+        max_hold_bars=2,
+        fee_bps=0.0,
+        slippage_bps=0.0,
+        breakeven_trigger_r=1.0,
+    )
+
+    trades = _simulate_signal_trades(features, signal="L", params=params)
+
+    assert trades[0]["exit_reason"] == "breakeven_stop"
+    assert trades[0]["pnl_pct"] == 0.0
+
+
+def test_entry_stoch_gate_filters_low_momentum_long_entry_bar() -> None:
+    index = pd.date_range("2026-01-01", periods=4, freq="h", tz="UTC")
+    features = pd.DataFrame(
+        {
+            "ocean_proxy_signal": ["L", "", "", ""],
+            "open": [100.0, 100.0, 100.0, 100.0],
+            "high": [100.0, 103.0, 100.0, 100.0],
+            "low": [100.0, 99.0, 100.0, 100.0],
+            "close": [100.0, 102.0, 100.0, 100.0],
+            "stoch_rsi_k": [70.0, 45.0, 70.0, 70.0],
+        },
+        index=index,
+    )
+    ungated = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="long",
+        stop_loss_pct=1.0,
+        take_profit_pct=2.0,
+        max_hold_bars=2,
+        fee_bps=0.0,
+        slippage_bps=0.0,
+    )
+    gated = TradingViewConvergenceParams(
+        family="tv_supertrend_macd",
+        side="long",
+        stop_loss_pct=1.0,
+        take_profit_pct=2.0,
+        max_hold_bars=2,
+        fee_bps=0.0,
+        slippage_bps=0.0,
+        min_entry_stoch=60.0,
+    )
+
+    assert len(_simulate_signal_trades(features, signal="L", params=ungated)) == 1
+    assert _simulate_signal_trades(features, signal="L", params=gated) == []
