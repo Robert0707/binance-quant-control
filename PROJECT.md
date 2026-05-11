@@ -125,6 +125,7 @@ Hermes 交易員模式：
 - `docs/architecture/hermes-ai-trader-v2.md` 是 Hermes AI Trader v2 的乾淨架構與 Hailo 分工。
 - `docs/workflows/hermes-ai-trader-v2-workflow.md` 是一鍵 gate 工作流。
 - `docs/workflows/market-bot-expectancy-research-pipeline.md` 是市面成熟 bot 風格的正期望值研究管線：feature dataset -> alpha research -> market-bot-gate -> Hermes gate -> live-readiness。
+- `docs/workflows/new-symbol-to-trade-pipeline.md` 是從任意新幣到 paper/testnet 交易資格的完整流水線：intent -> route -> feature dataset -> expectancy research -> risk-combo matrix -> Hermes AI Trader -> readiness -> decision contract -> operator dashboard；不啟用 mainnet。
 - `docs/workflows/professional-trading-lifecycle.md` 是專業交易生命週期的可重複工作流。
 - `docs/workflows/strategy-convergence-validation.md` 是正式收斂 gate 與 cohort 規範
 - `docs/workflows/mainstream-bot-risk-boundaries.md` 是這套邊界如何用在本專案的工作流

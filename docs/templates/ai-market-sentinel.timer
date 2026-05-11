@@ -2,8 +2,8 @@
 Description=Run Binance Quant AI market sentinel every 2 minutes
 
 [Timer]
-OnStartupSec=30s
-OnUnitActiveSec=2min
+OnActiveSec=30s
+OnUnitInactiveSec=2min
 AccuracySec=20s
 Persistent=true
 

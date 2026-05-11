@@ -8,6 +8,26 @@ Purpose: keep a machine-readable watch loop over positions, trend state, route q
 openclaw-quantctl ai-market-sentinel --compact
 ```
 
+When a readiness-approved candidate exists, the sentinel now builds a
+notification-only conditional-order card with:
+
+- symbol and long/short side
+- conditional entry/reference price
+- staged take-profit prices and quantities
+- stop-loss price
+- maximum safe leverage from the execution plan
+- machine-readable reasons for entry
+- the preflight and operator testnet execution commands
+
+Telegram delivery is opt-in and still does not open orders:
+
+```bash
+openclaw-quantctl ai-market-sentinel --send-telegram --compact
+```
+
+If no candidate passes readiness, Telegram is not sent and the report keeps the
+hard blocker taxonomy.
+
 Safe properties:
 
 - opens no orders

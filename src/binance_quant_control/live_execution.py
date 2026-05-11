@@ -375,6 +375,43 @@ def _minimum_structured_exit_quantity(
     return round(step_size * slices, quantity_precision)
 
 
+def _fit_exit_structure_to_quantity(
+    *,
+    quantity: float,
+    step_size: float,
+    quantity_precision: int,
+    take_profit_prices: list[float],
+    trailing_stop_enabled: bool,
+) -> tuple[list[float], bool, float]:
+    selected_prices = list(take_profit_prices)
+    runner_enabled = bool(trailing_stop_enabled)
+    if quantity <= 0.0 or step_size <= 0.0:
+        return selected_prices, runner_enabled, _minimum_structured_exit_quantity(
+            step_size=step_size,
+            quantity_precision=quantity_precision,
+            take_profit_parts=len(selected_prices),
+            trailing_stop_enabled=runner_enabled,
+        )
+    while selected_prices:
+        required = _minimum_structured_exit_quantity(
+            step_size=step_size,
+            quantity_precision=quantity_precision,
+            take_profit_parts=len(selected_prices),
+            trailing_stop_enabled=runner_enabled,
+        )
+        if quantity + 1e-12 >= required:
+            return selected_prices, runner_enabled, required
+        if runner_enabled:
+            runner_enabled = False
+            continue
+        if len(selected_prices) > 1:
+            selected_prices = selected_prices[: len(selected_prices) - 1]
+            runner_enabled = bool(trailing_stop_enabled)
+            continue
+        return selected_prices, False, required
+    return selected_prices, False, 0.0
+
+
 def build_live_execution_plan(
     settings: Settings,
     strategy: StrategyConfig,
@@ -390,7 +427,10 @@ def build_live_execution_plan(
     symbol = analysis_payload["symbol"].upper()
     market = analysis_payload["market"]
     analysis = analysis_payload["analysis"]
-    latest = analysis_payload["latest"]
+    latest = dict(analysis_payload["latest"])
+    market_context_payload = analysis_payload.get("market_context") if isinstance(analysis_payload.get("market_context"), dict) else {}
+    if "multi_timeframe_structure" not in latest and isinstance(market_context_payload.get("multi_timeframe_structure"), dict):
+        latest["multi_timeframe_structure"] = market_context_payload["multi_timeframe_structure"]
     trade_plan = analysis_payload["trade_plan"]
     bias = analysis["bias"]
     if side_override:
@@ -609,6 +649,7 @@ def build_live_execution_plan(
         analysis=analysis,
         trade_plan=trade_plan,
         news_risk=news_risk,
+        side=side,
         fee_bps=strategy.execution.fee_bps,
         slippage_bps=strategy.execution.slippage_bps,
     )
@@ -658,6 +699,22 @@ def build_live_execution_plan(
     quantity = round(quantity, rules.quantity_precision)
     if quantity <= 0.0 and raw_quantity > 0.0 and rules.min_qty > 0.0:
         quantity = round(rules.min_qty, rules.quantity_precision)
+    original_take_profit_count = len(take_profit_prices)
+    original_trailing_stop_enabled = bool(strategy.risk.trailing_stop_enabled)
+    take_profit_prices, effective_trailing_stop_enabled, required_structured_exit_quantity = _fit_exit_structure_to_quantity(
+        quantity=quantity,
+        step_size=rules.step_size,
+        quantity_precision=rules.quantity_precision,
+        take_profit_prices=take_profit_prices,
+        trailing_stop_enabled=original_trailing_stop_enabled,
+    )
+    if len(take_profit_prices) != original_take_profit_count or effective_trailing_stop_enabled != original_trailing_stop_enabled:
+        warnings.append(
+            "Exit structure adapted to exchange quantity step: "
+            f"{original_take_profit_count} TP(s) + runner={original_trailing_stop_enabled} -> "
+            f"{len(take_profit_prices)} TP(s) + runner={effective_trailing_stop_enabled}."
+        )
+    take_profit_price = take_profit_prices[0] if take_profit_prices else 0.0
     take_profit_weights = _take_profit_weights(
         parts=len(take_profit_prices),
         route_id=route.route_id,
@@ -666,7 +723,7 @@ def build_live_execution_plan(
         strategy_family=strategy_family,
     )
     runner_weight = _trailing_runner_weight(
-        trailing_stop_enabled=strategy.risk.trailing_stop_enabled,
+        trailing_stop_enabled=effective_trailing_stop_enabled,
         parts=len(take_profit_prices),
         route_id=route.route_id,
         confidence=sizing.confidence,
@@ -679,12 +736,6 @@ def build_live_execution_plan(
         rules.step_size,
         rules.quantity_precision,
         take_profit_weights,
-    )
-    required_structured_exit_quantity = _minimum_structured_exit_quantity(
-        step_size=rules.step_size,
-        quantity_precision=rules.quantity_precision,
-        take_profit_parts=len(take_profit_prices),
-        trailing_stop_enabled=strategy.risk.trailing_stop_enabled,
     )
     runner_quantity = round(max(0.0, quantity - sum(take_profit_quantities)), rules.quantity_precision)
     actual_notional = quantity * price
@@ -715,7 +766,7 @@ def build_live_execution_plan(
             f"Requested margin {requested_margin:.4f} exceeds the manual cap {margin_notional_usdt:.4f}."
         )
     if (
-        strategy.risk.trailing_stop_enabled
+        effective_trailing_stop_enabled
         and len(take_profit_prices) >= 3
         and required_structured_exit_quantity > 0
     ):
@@ -837,6 +888,9 @@ def build_live_execution_plan(
         "spread_bps": spread_bps,
         "sizing": {**sizing.to_dict(), "signal_scores": signal_scores},
         "market_bot_gate": market_bot_gate,
+        "regime": analysis.get("regime"),
+        "strategy_family": strategy_family,
+        "selected_strategy_family": selected_family,
     }
     professional_gate_policy = ProfessionalGatePolicy(
         min_reward_risk=1.2,
@@ -937,13 +991,13 @@ def build_live_execution_plan(
         planned_account_risk_pct=round(planned_account_risk_pct, 6),
         liquidation_buffer_pct=round(liquidation_buffer_pct, 6),
         min_liquidation_buffer_pct=round(min_liquidation_buffer_pct, 6),
-        trailing_stop_enabled=strategy.risk.trailing_stop_enabled,
+        trailing_stop_enabled=effective_trailing_stop_enabled,
         trailing_callback_pct=round(strategy.risk.trailing_callback_pct, 4),
         fee_bps=round(strategy.execution.fee_bps, 4),
         slippage_bps=round(dynamic_slippage_bps, 4),
         spread_bps=round(spread_bps, 4),
         order_book_fill_ratio=round(fill_ratio, 4),
-        market_context=analysis_payload.get("market_context") or {},
+        market_context=market_context_payload,
         sizing={**sizing.to_dict(), "signal_scores": signal_scores},
         execution_mode=execution_mode,
         challenge={

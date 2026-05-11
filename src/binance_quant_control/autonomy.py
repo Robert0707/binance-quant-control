@@ -930,6 +930,7 @@ def run_autonomy_cycle(path: str | Path | None = None) -> dict[str, Any]:
                     analysis=analysis_payload.get("analysis") or {},
                     trade_plan=analysis_payload.get("trade_plan") or {},
                     news_risk=news_risk,
+                    side=(candidate_side or str(live_plan.get("side") or "BUY")).upper(),
                 ),
             )
             summary["execution"]["mode"] = "testnet" if should_execute_testnet else "live"
@@ -950,6 +951,8 @@ def run_autonomy_cycle(path: str | Path | None = None) -> dict[str, Any]:
                 latest=analysis_payload.get("latest") or {},
                 analysis=analysis_payload.get("analysis") or {},
                 trade_plan=analysis_payload.get("trade_plan") or {},
+                news_risk=news_risk,
+                side=(candidate_side or str(live_plan.get("side") or "BUY")).upper(),
             )
             record = PaperOrderRecord(
                 generated_at=generated_at.isoformat(),

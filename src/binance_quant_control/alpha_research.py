@@ -302,7 +302,7 @@ def _research_performance_summary(
         "max_stop_loss_ratio": target_stop,
         "expectancy_r": target_expectancy,
         "payoff_ratio": target_payoff,
-        "win_rate_mode": "hard" if enforce_win_rate_gate else "metric_only",
+        "win_rate_mode": "hard" if enforce_win_rate_gate else "advisory",
     }
     summary["target_gap"] = {
         "win_rate_points": round(target_win - float(summary["weighted_win_rate"]), 4),
@@ -735,7 +735,7 @@ def _summarize_result(
         "base_promotion_candidate": base_promotion_candidate,
         "promotion_eligible": base_promotion_candidate and (not stressed_returns or resilience > 0.0),
         "promotion_min_trades": int(min_trades),
-        "win_rate_mode": "hard" if enforce_win_rate_gate else "metric_only",
+        "win_rate_mode": "hard" if enforce_win_rate_gate else "advisory",
         "report_json": payload["artifacts"]["report_json"],
     }
     if symbol_strategy_spec is not None:

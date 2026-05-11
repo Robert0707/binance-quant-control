@@ -119,10 +119,63 @@ def test_ai_market_sentinel_allows_expansion_when_positions_below_cap(
         lambda **kwargs: {
             "candidate_count": 3,
             "allowed_count": 1,
-            "selected_ready_candidate": {"symbol": "SOLUSDT", "side": "BUY"},
+            "selected_ready_candidate": {
+                "symbol": "SOLUSDT",
+                "side": "BUY",
+                "route_id": "sol-core",
+                "strategy_family": "trend",
+                "live_plan": {
+                    "price": 180.0,
+                    "stop_price": 174.0,
+                    "take_profit_prices": [186.0, 192.0, 204.0],
+                    "take_profit_quantities": [0.1, 0.1, 0.1],
+                    "take_profit_weights": [0.3, 0.35, 0.35],
+                    "take_profit_runner_quantity": 0.0,
+                    "leverage": 3,
+                    "quantity": 0.3,
+                    "margin_notional_usdt": 18.0,
+                    "gross_notional_usdt": 54.0,
+                    "planned_account_risk_pct": 0.018,
+                    "analysis_score": 72,
+                    "analysis_convergence": 0.7,
+                    "sizing": {"signal_scores": {"composite_quality_score": 71.5}},
+                    "professional_entry_gate": {
+                        "layers": {
+                            "strategy_performance": {
+                                "profit_factor": 1.24,
+                                "expectancy_r": 0.08,
+                                "payoff_ratio": 1.3,
+                            }
+                        }
+                    },
+                },
+            },
             "next_machine_action": "execute_ready_dry_run_only",
             "hard_blocker_taxonomy": {},
-            "execution_ticket": {"symbol": "SOLUSDT"},
+            "denial_journal_path": "state/hermes-readiness-scan/readiness-denials.jsonl",
+            "denial_journal_count": 0,
+            "execution_ticket": {
+                "symbol": "SOLUSDT",
+                "side": "BUY",
+                "market": "futures",
+                "interval": "15m",
+                "risk_snapshot": {
+                    "price": 180.0,
+                    "leverage": 3,
+                    "margin_notional_usdt": 18.0,
+                    "gross_notional_usdt": 54.0,
+                    "planned_account_risk_pct": 0.018,
+                    "analysis_score": 72,
+                    "analysis_convergence": 0.7,
+                },
+                "expectancy_evidence": {
+                    "profit_factor": 1.24,
+                    "expectancy_r": 0.08,
+                    "payoff_ratio": 1.3,
+                },
+                "preflight_command": "openclaw-quantctl live-readiness --symbol SOLUSDT --compact",
+                "operator_testnet_execute_command": "openclaw-quantctl live-pilot --symbol SOLUSDT --execute --compact",
+            },
             "report_path": "state/readiness.json",
         },
     )
@@ -134,6 +187,18 @@ def test_ai_market_sentinel_allows_expansion_when_positions_below_cap(
     assert "open-position-management-priority" not in payload["expansion_gate"]["blockers"]
     assert payload["machine_action_queue"][0]["action"] == "run_position_guardian"
     assert any(item["action"] == "operator_testnet_preflight" for item in payload["machine_action_queue"])
+    assert payload["readiness"]["denial_journal_count"] == 0
+    alert = payload["conditional_order_alert"]
+    assert alert["should_notify"] is True
+    assert alert["symbol"] == "SOLUSDT"
+    assert alert["action"] == "做多"
+    assert alert["condition_entry_price"] == 180.0
+    assert alert["stop_loss_price"] == 174.0
+    assert alert["take_profit_prices"] == [186.0, 192.0, 204.0]
+    assert alert["max_safe_leverage"] == 3
+    assert alert["execution_boundary"] == "notification_only_no_orders_sent"
+    assert "AI Trader 條件單候選" in payload["telegram_text"]
+    assert "條件進場價: 180" in payload["telegram_text"]
 
 
 def test_ai_market_sentinel_blocks_expansion_at_four_positions(monkeypatch, tmp_path: Path) -> None:
@@ -193,5 +258,73 @@ def test_ai_market_sentinel_allows_research_loop_when_flat_and_no_allowed_candid
 
     assert payload["position_state"]["open_position_count"] == 0
     assert payload["expansion_gate"]["allowed"] is False
+    assert payload["conditional_order_alert"]["should_notify"] is False
     assert payload["machine_action_queue"][0]["action"] == "run_ai_expectancy_upgrade"
     assert payload["machine_action_queue"][0]["reason"] == "no-readiness-approved-candidate"
+
+
+def test_ai_market_sentinel_sends_telegram_only_for_ready_candidate(monkeypatch, tmp_path: Path) -> None:
+    class FlatClient(FakeClient):
+        def positions(self, symbol=None):
+            return []
+
+    sent: dict[str, str] = {}
+    monkeypatch.setattr(sentinel, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(sentinel, "load_settings", lambda: FakeSettings())
+    monkeypatch.setattr(sentinel, "BinanceClient", FlatClient)
+    monkeypatch.setattr(sentinel, "load_trading_control_state", lambda: TradingControlState())
+    monkeypatch.setattr(sentinel, "load_route_risk_state", lambda: {"active_quarantined_routes": [], "routes": {}})
+
+    def fake_send_telegram(text: str) -> dict[str, object]:
+        sent["text"] = text
+        return {"sent": True}
+
+    monkeypatch.setattr(
+        sentinel,
+        "send_telegram_text",
+        fake_send_telegram,
+    )
+    monkeypatch.setattr(
+        sentinel,
+        "run_ai_readiness_scan",
+        lambda **kwargs: {
+            "candidate_count": 1,
+            "allowed_count": 1,
+            "selected_ready_candidate": {
+                "symbol": "ETHUSDT",
+                "side": "SELL",
+                "route_id": "eth-core",
+                "strategy_family": "breakdown",
+                "live_plan": {
+                    "price": 3000.0,
+                    "stop_price": 3060.0,
+                    "take_profit_prices": [2940.0, 2880.0],
+                    "leverage": 2,
+                    "quantity": 0.02,
+                    "margin_notional_usdt": 30.0,
+                    "gross_notional_usdt": 60.0,
+                    "planned_account_risk_pct": 0.012,
+                    "analysis_score": -72,
+                    "analysis_convergence": 0.66,
+                },
+            },
+            "execution_ticket": {
+                "symbol": "ETHUSDT",
+                "side": "SELL",
+                "market": "futures",
+                "interval": "15m",
+                "risk_snapshot": {"leverage": 2},
+            },
+        },
+    )
+
+    payload = sentinel.run_ai_market_sentinel(
+        symbols=["ETHUSDT"],
+        limit=80,
+        output_dir=tmp_path,
+        send_telegram=True,
+    )
+
+    assert payload["telegram"]["sent"] is True
+    assert "ETHUSDT 做空" in sent["text"]
+    assert "止損價: 3060" in sent["text"]

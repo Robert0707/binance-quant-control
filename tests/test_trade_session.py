@@ -21,6 +21,8 @@ def test_start_trade_session_enables_local_trading_timers(monkeypatch, tmp_path:
         "load_trading_control_state",
         lambda: TradingControlState(paused=True, updated_by="operator"),
     )
+    monkeypatch.setattr(session, "_positions_compact", lambda: {"count": 0, "positions": []})
+    monkeypatch.setattr(session, "load_route_risk_state", lambda: {"active_quarantined_routes": []})
 
     payload = session.start_trade_session(dry_run_only=True)
 
@@ -55,6 +57,8 @@ def test_start_trade_session_releases_own_pause(monkeypatch, tmp_path: Path) -> 
         "set_trading_paused",
         lambda **kwargs: pauses.append(kwargs) or TradingControlState(paused=kwargs["paused"]),
     )
+    monkeypatch.setattr(session, "_positions_compact", lambda: {"count": 0, "positions": []})
+    monkeypatch.setattr(session, "load_route_risk_state", lambda: {"active_quarantined_routes": []})
 
     payload = session.start_trade_session(dry_run_only=True)
 

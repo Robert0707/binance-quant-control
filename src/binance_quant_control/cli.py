@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,11 +31,18 @@ from .config import (
     PROJECT_ROOT,
     REPORTS_DIR,
     RUN_DIR,
+    STATE_DIR,
     TASK_SPEC_DIR,
     ensure_runtime_dirs,
     load_settings,
 )
 from .convergence import build_cohort_id
+from .decision_audit import run_decision_audit
+from .decision_output import (
+    build_ai_exit_decision_output,
+    build_ai_trade_decision_output,
+    build_blocked_trade_decision_output,
+)
 from .external_context import build_external_context, external_context_key_status
 from .feature_dataset import FeatureDatasetSpec, build_feature_dataset
 from .final_convergence_audit import run_final_convergence_audit
@@ -72,7 +80,11 @@ from .order_journal import (
     write_closed_trade_reviews,
     write_live_orders,
 )
-from .position_manager import build_position_management_plan, execute_position_management_plan
+from .position_manager import (
+    build_adaptive_exit_plan,
+    build_position_management_plan,
+    execute_position_management_plan,
+)
 from .professional_system_audit import run_professional_system_audit
 from .protective_repair import (
     build_staged_take_profit_repair_plan,
@@ -81,7 +93,7 @@ from .protective_repair import (
 from .public_history_training import run_public_history_training
 from .readiness_scanner import run_ai_readiness_scan
 from .repository_audit import run_repository_audit
-from .risk_combo_sweep import run_risk_combo_sweep
+from .risk_combo_sweep import build_risk_combo_matrix_report, run_risk_combo_sweep
 from .route_risk_control import (
     clear_route_quarantine,
     load_route_risk_state,
@@ -213,6 +225,7 @@ def _build_paper_order_record(
         latest=latest,
         analysis=insight,
         trade_plan=analysis.get("trade_plan") or {},
+        side=side,
     )
     cohort_id = build_cohort_id(
         asset_class=route.asset_class,
@@ -1341,12 +1354,34 @@ def cmd_operator_dashboard(args: argparse.Namespace) -> None:
         top_n=args.top_n,
     )
     if args.compact:
+        execution_journal = payload.get("execution_journal") or {}
+        latest_entry = execution_journal.get("latest") if isinstance(execution_journal.get("latest"), dict) else {}
+        compact_execution_journal = {
+            "record_count": execution_journal.get("record_count", 0),
+            "buy_count": execution_journal.get("buy_count", 0),
+            "sell_count": execution_journal.get("sell_count", 0),
+            "latest": {
+                "timestamp": latest_entry.get("timestamp"),
+                "symbol": latest_entry.get("symbol"),
+                "side": latest_entry.get("side"),
+                "status": latest_entry.get("status"),
+                "route_id": latest_entry.get("route_id"),
+                "simulation_mode": latest_entry.get("simulation_mode"),
+            }
+            if latest_entry
+            else None,
+            "meaning": execution_journal.get("meaning"),
+        }
         payload = {
             "status": payload["status"],
             "mode": payload["mode"],
             "customer_summary": payload["customer_summary"],
             "positions": payload["positions"],
             "protective_orders": payload["protective_orders"],
+            "execution_journal": compact_execution_journal,
+            "product_readiness": payload.get("product_readiness"),
+            "decision_artifact_audit": payload.get("decision_artifact_audit"),
+            "risk_combo_matrix": payload.get("risk_combo_matrix"),
             "loss_diagnostics": {
                 "summary": payload.get("loss_diagnostics", {}).get("summary"),
                 "findings": payload.get("loss_diagnostics", {}).get("findings"),
@@ -1551,6 +1586,7 @@ def _build_live_response(args: argparse.Namespace) -> dict[str, Any]:
         "strategy_profile": strategy.profile,
         "strategy_path": str(strategy.path),
         "analysis": analysis["analysis"],
+        "analysis_payload": analysis,
         "artifacts": analysis["artifacts"],
         "live_plan": plan.to_dict(),
     }
@@ -1571,9 +1607,93 @@ def _build_live_response(args: argparse.Namespace) -> dict[str, Any]:
                 latest=analysis.get("latest") or {},
                 analysis=analysis.get("analysis") or {},
                 trade_plan=analysis.get("trade_plan") or {},
+                side=plan.side,
             ),
         )
     return response
+
+
+def _write_trade_decision_report(payload: dict[str, Any]) -> str:
+    ensure_runtime_dirs()
+    report_dir = STATE_DIR / "trade-decisions"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    symbol = str(payload.get("symbol") or "unknown").lower()
+    decision = str(payload.get("decision") or "unknown").lower().replace("/", "-")
+    path = report_dir / f"{stamp}-{secrets.token_hex(3)}-{symbol}-{decision}-trade-decision.json"
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def cmd_trade_decision(args: argparse.Namespace) -> None:
+    if str(getattr(args, "action", "")).upper() == "EXIT":
+        settings = load_settings()
+        strategy = load_strategy_config(args.strategy_config)
+        symbol = args.symbol.upper() if args.symbol else strategy.defaults.symbol
+        market = args.market if args.market else strategy.defaults.market
+        interval = args.interval if args.interval else strategy.defaults.interval
+        limit = args.limit if args.limit else strategy.defaults.limit
+        use_blave = args.use_blave or strategy.defaults.use_blave
+        analysis, artifacts = run_analysis(
+            settings,
+            symbol=symbol,
+            market=market,
+            interval=interval,
+            limit=max(limit, 240),
+            use_blave=use_blave,
+            render_chart_flag=args.render_chart or strategy.defaults.render_chart,
+            strategy=strategy,
+        )
+        position_plan = build_position_management_plan(
+            settings,
+            symbol=symbol,
+            market=market,
+            strategy=strategy,
+        )
+        exit_plan = build_adaptive_exit_plan(position_plan, analysis)
+        payload = build_ai_exit_decision_output(
+            position_plan=position_plan,
+            exit_plan=exit_plan,
+            analysis_payload=analysis,
+        )
+        payload["symbol"] = symbol
+        payload["market"] = market
+        payload["execution_mode"] = getattr(args, "execution_mode", "testnet_exploration")
+        payload["opens_orders"] = False
+        payload["writes_execution_config"] = False
+        payload["report_artifacts"] = analysis.get("artifacts") or {"run_id": artifacts.run_id}
+        payload["position_plan"] = position_plan.to_dict()
+        payload["adaptive_exit_plan"] = exit_plan.to_dict()
+        payload["decision_report_path"] = _write_trade_decision_report(payload)
+        print_json(payload, compact=getattr(args, "compact", False))
+        return
+
+    try:
+        response = _build_live_response(args)
+    except BinanceAPIError as exc:
+        payload = build_blocked_trade_decision_output(
+            reason="Private exchange checks are unavailable.",
+            blockers=[f"binance-private-api-auth-failed:{exc}"],
+        )
+        print_json(payload, compact=getattr(args, "compact", False))
+        raise SystemExit(2) from exc
+
+    strategy = load_strategy_config(args.strategy_config)
+    payload = build_ai_trade_decision_output(
+        analysis_payload=response.get("analysis_payload") or {},
+        strategy=strategy,
+        live_plan=response.get("live_plan") or {},
+        requested_action=args.action or None,
+    )
+    live_plan = response.get("live_plan") or {}
+    payload["symbol"] = live_plan.get("symbol")
+    payload["market"] = live_plan.get("market")
+    payload["execution_mode"] = live_plan.get("execution_mode")
+    payload["opens_orders"] = False
+    payload["writes_execution_config"] = False
+    payload["report_artifacts"] = response.get("artifacts")
+    payload["decision_report_path"] = _write_trade_decision_report(payload)
+    print_json(payload, compact=getattr(args, "compact", False))
 
 
 def _run_live_response(args: argparse.Namespace) -> None:
@@ -1710,6 +1830,8 @@ def cmd_risk_combo_sweep(args: argparse.Namespace) -> None:
         symbols=[item.strip() for item in str(args.symbols).split(",") if item.strip()],
         limit=args.limit,
         grid_mode=args.grid_mode,
+        target_side=args.target_side,
+        target_interval=args.target_interval,
         target_profit_factor=args.target_profit_factor,
         min_test_trades=args.min_test_trades,
         min_win_rate=args.min_win_rate,
@@ -1730,10 +1852,52 @@ def cmd_risk_combo_sweep(args: argparse.Namespace) -> None:
                 "mode": payload.get("mode"),
                 "safety": payload.get("safety"),
                 "aggregate": payload.get("aggregate"),
+                "runtime_observability": payload.get("runtime_observability"),
                 "best_by_route": payload.get("best_by_route"),
                 "recovery_candidates": payload.get("recovery_candidates"),
                 "robust_recovery_candidates": payload.get("robust_recovery_candidates"),
                 "dataset_errors": payload.get("dataset_errors"),
+                "report_path": payload.get("report_path"),
+            },
+            compact=True,
+        )
+        return
+    print_json(payload)
+
+
+def cmd_risk_combo_matrix(args: argparse.Namespace) -> None:
+    payload = build_risk_combo_matrix_report(
+        report_paths=split_csv_arg(args.sweep_report),
+        output_dir=args.output_dir or None,
+        latest_sweeps=args.latest_sweeps,
+    )
+    if getattr(args, "compact", False):
+        print_json(
+            {
+                "mode": payload.get("mode"),
+                "safety": payload.get("safety"),
+                "input_report_count": payload.get("input_report_count"),
+                "skipped_input_report_count": payload.get("skipped_input_report_count"),
+                "skipped_input_reports": payload.get("skipped_input_reports"),
+                "surface_count": payload.get("surface_count"),
+                "promising_surface_count": payload.get("promising_surface_count"),
+                "emerging_positive_lead_count": payload.get("emerging_positive_lead_count"),
+                "superseded_emerging_positive_lead_count": payload.get("superseded_emerging_positive_lead_count"),
+                "recent_failed_repair_identity_count": payload.get("recent_failed_repair_identity_count"),
+                "robust_surface_count": payload.get("robust_surface_count"),
+                "side_summary": payload.get("side_summary"),
+                "horizon_summary": payload.get("horizon_summary"),
+                "completion_audit": payload.get("completion_audit"),
+                "objective_scorecard": payload.get("objective_scorecard"),
+                "prompt_to_artifact_checklist": payload.get("prompt_to_artifact_checklist"),
+                "risk_boundary": payload.get("risk_boundary"),
+                "best_surface": payload.get("best_surface"),
+                "emerging_positive_leads": payload.get("emerging_positive_leads"),
+                "superseded_emerging_positive_leads": payload.get("superseded_emerging_positive_leads"),
+                "validation_plan": payload.get("validation_plan"),
+                "negative_surface_repair_plan": payload.get("negative_surface_repair_plan"),
+                "next_research_actions": payload.get("next_research_actions"),
+                "promotion_boundary": payload.get("promotion_boundary"),
                 "report_path": payload.get("report_path"),
             },
             compact=True,
@@ -1800,6 +1964,28 @@ def cmd_repository_audit(args: argparse.Namespace) -> None:
                 "summary": payload.get("summary"),
                 "largest_files": payload.get("largest_files"),
                 "architecture_findings": payload.get("architecture_findings"),
+                "report_path": payload.get("report_path"),
+            },
+            compact=True,
+        )
+        return
+    print_json(payload)
+
+
+def cmd_decision_audit(args: argparse.Namespace) -> None:
+    payload = run_decision_audit(
+        input_dir=args.input_dir or None,
+        output_dir=args.output_dir or None,
+        since_contract=bool(args.since_contract),
+    )
+    if getattr(args, "compact", False):
+        print_json(
+            {
+                "mode": payload.get("mode"),
+                "status": payload.get("status"),
+                "scope": payload.get("scope"),
+                "summary": payload.get("summary"),
+                "invalid_artifacts": payload.get("invalid_artifacts"),
                 "report_path": payload.get("report_path"),
             },
             compact=True,
@@ -1917,7 +2103,10 @@ def cmd_ai_readiness_scan(args: argparse.Namespace) -> None:
                 "execution_ticket": payload.get("execution_ticket"),
                 "next_machine_action": payload.get("next_machine_action"),
                 "machine_action_queue": payload.get("machine_action_queue"),
+                "research_candidate_report": payload.get("research_candidate_report"),
                 "hard_blocker_classes": sorted((payload.get("hard_blocker_taxonomy") or {}).keys()),
+                "denial_journal_path": payload.get("denial_journal_path"),
+                "denial_journal_count": payload.get("denial_journal_count"),
                 "scan_summary": scan_summary,
                 "hermes_ai_trader_report": payload.get("hermes_ai_trader_report"),
                 "report_path": payload.get("report_path"),
@@ -2030,6 +2219,8 @@ def cmd_ai_market_sentinel(args: argparse.Namespace) -> None:
         blueprint_config=args.blueprint_config,
         output_dir=args.output_dir or None,
         skip_readiness=bool(args.skip_readiness),
+        send_telegram=bool(args.send_telegram),
+        max_readiness_candidates=args.max_readiness_candidates,
     )
     if getattr(args, "compact", False):
         print_json(
@@ -2042,6 +2233,8 @@ def cmd_ai_market_sentinel(args: argparse.Namespace) -> None:
                 "route_risk": payload.get("route_risk"),
                 "readiness": payload.get("readiness"),
                 "expansion_gate": payload.get("expansion_gate"),
+                "conditional_order_alert": payload.get("conditional_order_alert"),
+                "telegram": payload.get("telegram"),
                 "machine_action_queue": payload.get("machine_action_queue"),
                 "errors": payload.get("errors"),
                 "report_path": payload.get("report_path"),
@@ -2616,6 +2809,38 @@ def build_parser() -> argparse.ArgumentParser:
     live_readiness.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
     live_readiness.set_defaults(func=cmd_live_readiness, execute=False)
 
+    trade_decision = sub.add_parser(
+        "trade-decision",
+        help="Emit auditable BUY/SELL/HOLD/EXIT decision schema without sending orders",
+    )
+    trade_decision.add_argument("--strategy-config", default=str(CONFIG_DIR / "strategy-live-pilot.yaml"))
+    trade_decision.add_argument("--symbol", default="")
+    trade_decision.add_argument("--market", choices=("spot", "futures"), default="")
+    trade_decision.add_argument("--interval", default="")
+    trade_decision.add_argument("--limit", type=int, default=0)
+    trade_decision.add_argument("--use-blave", action="store_true")
+    trade_decision.add_argument("--render-chart", action="store_true")
+    trade_decision.add_argument("--side", choices=("BUY", "SELL"), default="")
+    trade_decision.add_argument("--action", choices=("BUY", "LONG", "SELL", "SHORT", "HOLD", "EXIT"), default="")
+    trade_decision.add_argument("--margin-notional-usdt", type=float, default=0.0)
+    trade_decision.add_argument("--execution-mode", choices=("live", "testnet_exploration"), default="testnet_exploration")
+    trade_decision.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
+    trade_decision.set_defaults(func=cmd_trade_decision, execute=False)
+
+    decision_audit = sub.add_parser(
+        "decision-audit",
+        help="Audit stored trade-decision JSON artifacts for contract, risk, and read-only violations",
+    )
+    decision_audit.add_argument("--input-dir", default="")
+    decision_audit.add_argument("--output-dir", default="")
+    decision_audit.add_argument(
+        "--since-contract",
+        action="store_true",
+        help="Ignore pre-contract legacy artifacts that lack embedded decision_contract_validation",
+    )
+    decision_audit.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
+    decision_audit.set_defaults(func=cmd_decision_audit)
+
     live_pilot = sub.add_parser("live-pilot", help="Run the live pilot path; use --execute to actually place orders")
     live_pilot.add_argument("--strategy-config", default=str(CONFIG_DIR / "strategy-live-pilot.yaml"))
     live_pilot.add_argument("--symbol", default="")
@@ -2688,6 +2913,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     risk_combo_sweep.add_argument("--limit", type=int, default=1500)
     risk_combo_sweep.add_argument("--grid-mode", choices=("fast", "focused", "standard"), default="fast")
+    risk_combo_sweep.add_argument(
+        "--target-side",
+        choices=("BUY", "SELL"),
+        default="",
+        help="Research-only side filter. Backtests only entries matching this direction.",
+    )
+    risk_combo_sweep.add_argument(
+        "--target-interval",
+        default="",
+        help="Research-only kline interval override, e.g. 15m, 4h, 1d.",
+    )
     risk_combo_sweep.add_argument("--target-profit-factor", type=float, default=0.8)
     risk_combo_sweep.add_argument("--min-test-trades", type=int, default=3)
     risk_combo_sweep.add_argument("--min-win-rate", type=float, default=0.0)
@@ -2702,6 +2938,26 @@ def build_parser() -> argparse.ArgumentParser:
     risk_combo_sweep.add_argument("--top-n", type=int, default=20)
     risk_combo_sweep.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
     risk_combo_sweep.set_defaults(func=cmd_risk_combo_sweep)
+
+    risk_combo_matrix = sub.add_parser(
+        "risk-combo-matrix",
+        help="Aggregate risk-combo-sweep reports into an auditable BUY/SELL x interval research matrix",
+    )
+    risk_combo_matrix.add_argument(
+        "--sweep-report",
+        action="append",
+        default=None,
+        help="Risk-combo-sweep report path. May be repeated or comma-separated.",
+    )
+    risk_combo_matrix.add_argument(
+        "--latest-sweeps",
+        type=int,
+        default=0,
+        help="Automatically include the most recent N risk-combo-sweep reports.",
+    )
+    risk_combo_matrix.add_argument("--output-dir", default="")
+    risk_combo_matrix.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
+    risk_combo_matrix.set_defaults(func=cmd_risk_combo_matrix)
 
     high_win_iteration = sub.add_parser(
         "high-win-iteration",
@@ -2890,6 +3146,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ai_market_sentinel.add_argument("--output-dir", default="")
     ai_market_sentinel.add_argument("--skip-readiness", action="store_true")
+    ai_market_sentinel.add_argument("--max-readiness-candidates", type=int, default=6)
+    ai_market_sentinel.add_argument(
+        "--send-telegram",
+        action="store_true",
+        help="Send the readiness-approved conditional order candidate to Telegram",
+    )
     ai_market_sentinel.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
     ai_market_sentinel.set_defaults(func=cmd_ai_market_sentinel)
 

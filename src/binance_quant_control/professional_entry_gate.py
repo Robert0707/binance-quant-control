@@ -9,6 +9,9 @@ from .order_journal import read_closed_trade_reviews
 
 PURE_STOP_REASONS = {"stop_loss", "stop_priority_same_bar"}
 STOP_AFTER_PROFIT_REASONS = {"partial_tp_then_stop"}
+TREND_FAMILIES = {"trend_continuation", "trend_pullback", "breakout", "liquidity_reclaim", "vwap_reclaim", "ai_family_router"}
+RANGE_FAMILIES = {"mean_reversion", "range_mean_reversion", "liquidity_reclaim", "vwap_reclaim", "ai_family_router"}
+SURGE_FAMILIES = {"trend_continuation", "breakout", "liquidity_reclaim", "vwap_reclaim", "ai_family_router"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +28,8 @@ class ProfessionalGatePolicy:
     min_composite_quality: float = 0.0
     min_price_structure_score: float = 0.0
     min_execution_quality_score: float = 0.0
+    require_mtf_alignment: bool = True
+    min_mtf_confidence: float = 0.55
     min_recent_reviews: int = 6
     min_recent_win_rate: float = 0.42
     min_recent_profit_factor: float = 1.0
@@ -300,6 +305,41 @@ def _planned_reward_distance(*, side: str, live_plan: dict[str, Any], price: flo
     return weighted_reward / total_weight if total_weight > 0.0 else 0.0
 
 
+def _canonical_regime(latest: dict[str, Any], live_plan: dict[str, Any]) -> str:
+    raw = str(live_plan.get("regime") or latest.get("regime") or "").lower()
+    if raw in {"trend-up", "trend-down", "trend"}:
+        return "trend"
+    if raw in {"range", "squeeze"}:
+        return "range"
+    if raw in {"crash", "pump", "low_liquidity", "abnormal_volatility"}:
+        return raw
+    volume_z = _float(latest.get("volume_zscore_20"))
+    spread_bps = _float(live_plan.get("spread_bps"))
+    if spread_bps > 12.0 or volume_z < -1.2:
+        return "low_liquidity"
+    realized_vol = _float(latest.get("realized_vol_20"))
+    close = _float(latest.get("close") or live_plan.get("price"))
+    ema_slow = _float(latest.get("ema_slow"))
+    macd_hist = _float(latest.get("macd_hist"))
+    if realized_vol >= 1.8 or volume_z >= 2.5:
+        if close > 0 and ema_slow > 0 and close >= ema_slow and macd_hist >= 0:
+            return "pump"
+        if close > 0 and ema_slow > 0 and close <= ema_slow and macd_hist <= 0:
+            return "crash"
+        return "abnormal_volatility"
+    return raw or "unknown"
+
+
+def _strategy_family(live_plan: dict[str, Any]) -> str:
+    family = str(live_plan.get("strategy_family") or "").strip().lower()
+    if family:
+        return family
+    selected = live_plan.get("selected_strategy_family")
+    if isinstance(selected, dict):
+        return str(selected.get("family") or "").strip().lower()
+    return ""
+
+
 def evaluate_professional_entry_gate(
     *,
     side: str,
@@ -323,6 +363,42 @@ def evaluate_professional_entry_gate(
     layers: dict[str, dict[str, Any]] = {}
 
     side_upper = side.upper()
+    regime = _canonical_regime(latest, live_plan)
+    strategy_family = _strategy_family(live_plan)
+    regime_passed = True
+    allowed_families: set[str] = set()
+    if regime == "low_liquidity":
+        regime_passed = False
+        violations.append("Low-liquidity regime blocks new entries until volume/spread normalize.")
+    elif regime in {"pump", "crash", "abnormal_volatility"}:
+        allowed_families = SURGE_FAMILIES
+        if strategy_family and strategy_family not in allowed_families:
+            regime_passed = False
+            violations.append(
+                f"Regime {regime} only allows surge/trend families; strategy family {strategy_family} is not allowed."
+            )
+    elif regime == "range":
+        allowed_families = RANGE_FAMILIES
+        if strategy_family and strategy_family not in allowed_families:
+            regime_passed = False
+            violations.append(
+                f"Range regime only allows mean-reversion or reclaim families; strategy family {strategy_family} is not allowed."
+            )
+    elif regime == "trend":
+        allowed_families = TREND_FAMILIES
+        if strategy_family and strategy_family not in allowed_families:
+            regime_passed = False
+            violations.append(
+                f"Trend regime requires trend/breakout/reclaim families; strategy family {strategy_family} is not allowed."
+            )
+    else:
+        warnings.append("Market regime is unknown; professional gate relies on lower-level factor checks.")
+    layers["regime_policy"] = {
+        "passed": regime_passed,
+        "regime": regime,
+        "strategy_family": strategy_family or None,
+        "allowed_families": sorted(allowed_families),
+    }
     price = _float(live_plan.get("price"))
     quantity = _float(live_plan.get("quantity"))
     stop_price = _float(live_plan.get("stop_price"))
@@ -475,6 +551,40 @@ def evaluate_professional_entry_gate(
         "composite_convergence_score": round(composite_quality, 4),
         "price_structure_score": round(price_structure_score, 4),
         "execution_quality_score": round(execution_quality_score, 4),
+    }
+
+    mtf = latest.get("multi_timeframe_structure") if isinstance(latest.get("multi_timeframe_structure"), dict) else {}
+    mtf_bias = str(mtf.get("bias") or "neutral")
+    mtf_alignment = str(mtf.get("alignment") or "unavailable")
+    mtf_confidence = _float(mtf.get("confidence"))
+    expected_mtf_bias = "long" if side_upper == "BUY" else "short" if side_upper == "SELL" else "neutral"
+    mtf_passed = True
+    if active_policy.require_mtf_alignment and mtf:
+        if mtf_alignment == "conflicted" or (
+            mtf_bias in {"long", "short"}
+            and expected_mtf_bias in {"long", "short"}
+            and mtf_bias != expected_mtf_bias
+        ):
+            mtf_passed = False
+            violations.append(
+                f"Multi-timeframe trend conflicts with {side_upper}: "
+                f"bias={mtf_bias}, alignment={mtf_alignment}, confidence={mtf_confidence:.2f}."
+            )
+        elif mtf_alignment not in {"strong", "mixed"} or mtf_confidence < active_policy.min_mtf_confidence:
+            mtf_passed = False
+            violations.append(
+                f"Multi-timeframe trend is not strong enough for {side_upper}: "
+                f"bias={mtf_bias}, alignment={mtf_alignment}, confidence={mtf_confidence:.2f}."
+            )
+    elif active_policy.require_mtf_alignment:
+        warnings.append("Multi-timeframe trend structure is unavailable; relying on base trend and flow gates.")
+    layers["multi_timeframe_trend"] = {
+        "passed": mtf_passed,
+        "required": active_policy.require_mtf_alignment,
+        "expected_bias": expected_mtf_bias,
+        "bias": mtf_bias,
+        "alignment": mtf_alignment,
+        "confidence": round(mtf_confidence, 4),
     }
 
     review_stats = _recent_review_stats(

@@ -6,11 +6,49 @@ from pathlib import Path
 import binance_quant_control.hermes_ai_trader as trader
 
 
+def _route_not_quarantined(route_id: str) -> dict[str, object]:
+    return {
+        "route_id": route_id,
+        "quarantined": False,
+        "reasons": [],
+        "metrics": {},
+        "updated_at": "",
+        "updated_by": "",
+        "manual_review_required": False,
+    }
+
+
+def _route_side_allowed(*, route_id: str, side: str):
+    return type(
+        "RouteSideAllowed",
+        (),
+        {
+            "allowed": True,
+            "reasons": [],
+            "to_dict": lambda self: {
+                "allowed": True,
+                "route_id": route_id,
+                "side": side,
+                "sample_count": 0,
+                "profit_factor": 0.0,
+                "net_pnl_usdt": 0.0,
+                "stop_loss_ratio": 0.0,
+                "avg_r_multiple": 0.0,
+                "loss_streak": 0,
+                "threshold_profit_factor": 0.8,
+                "min_samples": 30,
+                "reasons": [],
+            },
+        },
+    )()
+
+
 def test_hermes_ai_trader_blocks_negative_alpha_and_records_skip(tmp_path, monkeypatch) -> None:
     skipped: dict[str, object] = {}
     signal_rows: list[dict[str, object]] = []
 
     monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
     monkeypatch.setattr(
         trader,
         "run_professional_system_audit",
@@ -63,6 +101,8 @@ def test_hermes_ai_trader_blocks_negative_alpha_and_records_skip(tmp_path, monke
 
 def test_hermes_ai_trader_can_allow_when_all_gates_are_clean(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "route_quarantine_status", _route_not_quarantined)
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
     monkeypatch.setattr(
         trader,
         "run_professional_system_audit",
@@ -101,6 +141,8 @@ def test_hermes_ai_trader_can_allow_when_all_gates_are_clean(tmp_path, monkeypat
 
 def test_hermes_ai_trader_prefers_market_bot_gate_candidate(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "route_quarantine_status", _route_not_quarantined)
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
     monkeypatch.setattr(trader, "append_trading_signal", lambda signal, gate=None: tmp_path / "signals.jsonl")
     monkeypatch.setattr(trader, "append_skipped_signal", lambda **_kwargs: tmp_path / "skipped.jsonl")
     monkeypatch.setattr(
@@ -176,6 +218,8 @@ def test_hermes_ai_trader_builds_machine_candidate_queue_for_all_market_bot_rows
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "route_quarantine_status", _route_not_quarantined)
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
     monkeypatch.setattr(trader, "append_trading_signal", lambda signal, gate=None: tmp_path / "signals.jsonl")
     monkeypatch.setattr(trader, "append_skipped_signal", lambda **_kwargs: tmp_path / "skipped.jsonl")
     accepted = [
@@ -272,6 +316,178 @@ def test_hermes_ai_trader_builds_machine_candidate_queue_for_all_market_bot_rows
     assert payload["machine_strategy"]["exploit_symbols"] == ["DOGEUSDT", "ETHUSDT", "BTCUSDT"]
 
 
+def test_hermes_ai_trader_quarantines_market_bot_candidate_when_route_risk_is_active(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "append_trading_signal", lambda signal, gate=None: tmp_path / "signals.jsonl")
+    monkeypatch.setattr(trader, "append_skipped_signal", lambda **_kwargs: tmp_path / "skipped.jsonl")
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
+    monkeypatch.setattr(
+        trader,
+        "route_quarantine_status",
+        lambda route_id: {
+            "route_id": route_id,
+            "quarantined": route_id == "btc-core",
+            "reasons": ["profit-factor 0.379 below floor 0.800"],
+            "metrics": {"profit_factor": 0.379},
+            "updated_at": "2026-04-28T16:38:24+00:00",
+            "updated_by": "delivery-supervisor",
+            "manual_review_required": True,
+        },
+    )
+    monkeypatch.setattr(
+        trader,
+        "run_professional_system_audit",
+        lambda **_kwargs: {
+            "trade_ready": True,
+            "critical_blockers": [],
+            "execution_recommendation": "paper_or_testnet_readiness_review",
+            "layer_summary": {"total": 13},
+            "report_path": "state/audit.json",
+            "evidence": {
+                "market_bot_gate": {
+                    "available": True,
+                    "path": "state/market-bot-gate.json",
+                    "safe_to_open_new_entries": True,
+                    "accepted_count": 1,
+                    "accepted_symbols": ["BTCUSDT"],
+                    "targets": {
+                        "min_trades": 100,
+                        "min_profit_factor": 1.25,
+                        "min_expectancy_r": 0.05,
+                        "min_payoff_ratio": 1.2,
+                    },
+                    "portfolio_gate": {"enabled": True, "passed": True},
+                    "accepted": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "interval": "4h",
+                            "strategy_family": "ai_family_router",
+                            "route_id": "btc-core",
+                            "cohort_id": "BTCUSDT:4h:ai_family_router",
+                            "accepted": True,
+                            "trade_count": 154,
+                            "market_bot_score": 201.4,
+                            "expectancy_r": 0.1408,
+                            "payoff_ratio": 2.4427,
+                            "profit_factor": 1.3571,
+                            "win_rate": 35.71,
+                            "stop_loss_ratio": 46.75,
+                        }
+                    ],
+                },
+                "alpha_report": {"available": False},
+            },
+        },
+    )
+
+    payload = trader.run_hermes_ai_trader(output_dir=tmp_path)
+
+    queue_item = payload["candidate_queue"][0]
+    assert queue_item["signal"]["symbol"] == "BTCUSDT"
+    assert queue_item["machine_state"] == "route_history_blocked"
+    assert queue_item["machine_directive"]["directive"] == "quarantine"
+    assert queue_item["next_action"] == "repair_route_history_or_wait_for_quarantine_clear"
+    assert "BTCUSDT" not in payload["machine_policy"]["next_scan_symbols"]
+    assert payload["machine_strategy"]["quarantine_symbols"] == ["BTCUSDT"]
+    assert "route_quarantine" in queue_item["signal"]["metadata"]
+
+
+def test_hermes_ai_trader_blocks_candidate_when_route_side_history_is_weak(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "route_quarantine_status", _route_not_quarantined)
+    monkeypatch.setattr(trader, "append_trading_signal", lambda signal, gate=None: tmp_path / "signals.jsonl")
+    monkeypatch.setattr(trader, "append_skipped_signal", lambda **_kwargs: tmp_path / "skipped.jsonl")
+
+    def weak_route_side(*, route_id: str, side: str):
+        return type(
+            "WeakRouteSide",
+            (),
+            {
+                "allowed": False,
+                "reasons": [
+                    f"Route-side historical PF 0.5523 is below 0.8000 for {route_id}/{side} over 38 reviews."
+                ],
+                "to_dict": lambda self: {
+                    "allowed": False,
+                    "route_id": route_id,
+                    "side": side,
+                    "sample_count": 38,
+                    "profit_factor": 0.5523,
+                    "net_pnl_usdt": -2.6796,
+                    "stop_loss_ratio": 73.68,
+                    "avg_r_multiple": -0.22,
+                    "loss_streak": 3,
+                    "threshold_profit_factor": 0.8,
+                    "min_samples": 30,
+                    "reasons": self.reasons,
+                },
+            },
+        )()
+
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", weak_route_side)
+    monkeypatch.setattr(
+        trader,
+        "run_professional_system_audit",
+        lambda **_kwargs: {
+            "trade_ready": True,
+            "critical_blockers": [],
+            "execution_recommendation": "paper_or_testnet_readiness_review",
+            "layer_summary": {"total": 13},
+            "report_path": "state/audit.json",
+            "evidence": {
+                "market_bot_gate": {
+                    "available": True,
+                    "path": "state/market-bot-gate.json",
+                    "safe_to_open_new_entries": True,
+                    "accepted_count": 1,
+                    "accepted_symbols": ["ETHUSDT"],
+                    "targets": {
+                        "min_trades": 100,
+                        "min_profit_factor": 1.25,
+                        "min_expectancy_r": 0.05,
+                        "min_payoff_ratio": 1.2,
+                    },
+                    "portfolio_gate": {"enabled": True, "passed": True},
+                    "accepted": [
+                        {
+                            "symbol": "ETHUSDT",
+                            "interval": "4h",
+                            "strategy_family": "ai_family_router",
+                            "route_id": "eth-core",
+                            "cohort_id": "ETHUSDT:4h:ai_family_router",
+                            "accepted": True,
+                            "trade_count": 118,
+                            "market_bot_score": 219.8,
+                            "expectancy_r": 0.2407,
+                            "payoff_ratio": 3.1092,
+                            "profit_factor": 1.4202,
+                            "win_rate": 31.36,
+                            "stop_loss_ratio": 54.24,
+                        }
+                    ],
+                },
+                "alpha_report": {"available": False},
+            },
+        },
+    )
+
+    payload = trader.run_hermes_ai_trader(output_dir=tmp_path)
+
+    queue_item = payload["candidate_queue"][0]
+    assert queue_item["signal"]["symbol"] == "ETHUSDT"
+    assert queue_item["machine_state"] == "route_history_blocked"
+    assert queue_item["machine_directive"]["directive"] == "quarantine"
+    assert queue_item["blocker_taxonomy"]["route_history"]
+    assert "ETHUSDT" not in payload["machine_policy"]["next_scan_symbols"]
+    assert queue_item["signal"]["metadata"]["route_side_risk"]["allowed"] is False
+
+
 def test_hermes_ai_trader_selects_real_alpha_row_instead_of_aggregate(tmp_path, monkeypatch) -> None:
     alpha_report = tmp_path / "alpha-research-ranking.json"
     alpha_report.write_text(
@@ -312,6 +528,7 @@ def test_hermes_ai_trader_selects_real_alpha_row_instead_of_aggregate(tmp_path, 
         encoding="utf-8",
     )
     monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
     monkeypatch.setattr(trader, "append_trading_signal", lambda signal, gate=None: tmp_path / "signals.jsonl")
     monkeypatch.setattr(trader, "append_skipped_signal", lambda **_kwargs: tmp_path / "skipped.jsonl")
     monkeypatch.setattr(
@@ -351,6 +568,7 @@ def test_hermes_ai_trader_selects_real_alpha_row_instead_of_aggregate(tmp_path, 
 
 def test_hermes_ai_trader_routes_negative_surface_to_quarantine(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(trader, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(trader, "evaluate_route_side_risk", _route_side_allowed)
     monkeypatch.setattr(trader, "append_trading_signal", lambda signal, gate=None: tmp_path / "signals.jsonl")
     monkeypatch.setattr(trader, "append_skipped_signal", lambda **_kwargs: tmp_path / "skipped.jsonl")
     monkeypatch.setattr(

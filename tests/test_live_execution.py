@@ -232,6 +232,128 @@ def test_live_execution_plan_splits_staged_take_profit_quantities(monkeypatch):
     assert plan.sizing["signal_scores"]["event_risk_score"] == 50.0
 
 
+def test_live_execution_plan_degrades_exits_for_micro_quantity(monkeypatch):
+    strategy = load_strategy_config(Path("config/strategy-live-pilot.yaml"))
+
+    class FakeSettings:
+        live_trading_enabled = False
+        use_testnet = True
+        testnet_trading_enabled = True
+
+    analysis_payload = {
+        "symbol": "ETHUSDT",
+        "market": "futures",
+        "analysis": {
+            "score": 88,
+            "bias": "long-bias",
+            "convergence": 0.9,
+        },
+        "latest": {
+            "close": 1.416,
+            "adx": 28.0,
+            "volume_zscore_20": 1.0,
+            "obv_zscore_20": 1.0,
+        },
+        "trade_plan": {
+            "long": {
+                "invalidation": 1.36,
+                "take_profit_1": 1.47,
+                "take_profit_2": 1.52,
+                "take_profit_3": 1.58,
+            },
+            "short": {
+                "invalidation": 1.45,
+                "take_profit_1": 1.37,
+                "take_profit_2": 1.32,
+                "take_profit_3": 1.28,
+            },
+        },
+    }
+
+    _allow_historical_signal_risk(monkeypatch)
+    monkeypatch.setattr("binance_quant_control.live_execution.BinanceClient", FakeClient)
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.route_quarantine_status",
+        lambda route_id: {"route_id": route_id, "quarantined": False, "reasons": []},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_optimizer_live_gate",
+        lambda: {"allowed": True, "reasons": [], "promotion_decision": "promote"},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_market_bot_live_gate",
+        lambda symbol, route_id: {"allowed": False, "reasons": ["not promoted"], "matched_row": None},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_route_side_risk",
+        lambda route_id, side: type(
+            "SideRisk",
+            (),
+            {
+                "allowed": True,
+                "reasons": [],
+                "to_dict": lambda self: {
+                    "allowed": True,
+                    "route_id": route_id,
+                    "side": side,
+                    "sample_count": 0,
+                    "profit_factor": 0.0,
+                    "net_pnl_usdt": 0.0,
+                    "stop_loss_ratio": 0.0,
+                    "avg_r_multiple": 0.0,
+                    "reasons": [],
+                },
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.record_balance_snapshot",
+        lambda payload, market, note="", scope=None: (
+            type(
+                "Snapshot",
+                (),
+                {
+                    "wallet_balance_usdt": 5.31893002,
+                    "available_balance_usdt": 2.16795127,
+                    "unrealized_pnl_usdt": 0.0,
+                    "equity_usdt": 5.31893002,
+                },
+            )(),
+            ChallengeState(),
+        ),
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.professional_entry_gate.read_closed_trade_reviews",
+        lambda: [
+            {
+                "symbol": "ETHUSDT",
+                "side": "BUY",
+                "route_id": "eth-core",
+                "exit_reason": "take_profit",
+                "realized_pnl_usdt": 1.0,
+                "realized_r_multiple": 1.0,
+            }
+            for _ in range(8)
+        ],
+    )
+
+    plan = build_live_execution_plan(
+        FakeSettings(),
+        strategy,
+        analysis_payload,
+        margin_notional_usdt=2.0,
+        execution_mode="testnet_exploration",
+    )
+
+    assert plan.quantity == 1
+    assert plan.take_profit_prices == [1.47]
+    assert plan.trailing_stop_enabled is False
+    assert plan.take_profit_quantities == [1]
+    assert plan.take_profit_runner_quantity == 0
+    assert not any("Quantity cannot support three staged" in item for item in plan.violations)
+    assert any("Exit structure adapted" in item for item in plan.warnings)
+
+
 def test_live_execution_plan_reduces_sizing_for_high_news_and_weak_flow(monkeypatch):
     strategy = load_strategy_config(Path("config/strategy-meme-momentum.yaml"))
 
@@ -495,7 +617,8 @@ def test_build_live_execution_plan_caps_risk_for_tight_profile(monkeypatch):
     assert plan.allowed is False
     assert 1.0 <= plan.quantity <= 4.0
     assert plan.planned_account_risk_pct <= 0.01
-    assert plan.trailing_stop_enabled is True
+    assert plan.trailing_stop_enabled is False
+    assert any("Exit structure adapted" in item for item in plan.warnings)
     assert any("below exchange minimum" in item for item in plan.violations)
 
 
@@ -1495,3 +1618,123 @@ def test_live_execution_plan_blocks_poor_professional_payoff(monkeypatch):
     assert plan.allowed is False
     assert plan.professional_entry_gate["passed"] is False
     assert any("Reward/risk" in item for item in plan.violations)
+
+
+def test_live_execution_plan_passes_market_context_mtf_to_professional_gate(monkeypatch):
+    strategy = load_strategy_config(Path("config/strategy-live-pilot.yaml"))
+
+    class FakeSettings:
+        live_trading_enabled = False
+
+    analysis_payload = {
+        "symbol": "ETHUSDT",
+        "market": "futures",
+        "analysis": {
+            "score": 88,
+            "bias": "long-bias",
+            "convergence": 0.9,
+        },
+        "latest": {
+            "close": 1.416,
+            "adx": 28,
+            "realized_vol_20": 0.8,
+            "volume_zscore_20": 0.4,
+            "obv_zscore_20": 0.7,
+            "bb_bandwidth": 0.08,
+        },
+        "market_context": {
+            "multi_timeframe_structure": {
+                "bias": "short",
+                "alignment": "strong",
+                "confidence": 0.84,
+            }
+        },
+        "trade_plan": {
+            "long": {
+                "invalidation": 1.36,
+                "take_profit_1": 1.47,
+                "take_profit_2": 1.52,
+            },
+            "short": {"invalidation": 1.45, "take_profit_1": 1.37},
+        },
+    }
+
+    _allow_historical_signal_risk(monkeypatch)
+    monkeypatch.setattr("binance_quant_control.live_execution.BinanceClient", FakeClient)
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.route_quarantine_status",
+        lambda route_id: {"route_id": route_id, "quarantined": False, "reasons": []},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_optimizer_live_gate",
+        lambda: {"allowed": True, "reasons": [], "promotion_decision": "promote"},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_market_bot_live_gate",
+        lambda symbol, route_id: {"allowed": False, "reasons": ["not promoted"], "matched_row": None},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_route_side_risk",
+        lambda route_id, side: type(
+            "SideRisk",
+            (),
+            {
+                "allowed": True,
+                "reasons": [],
+                "to_dict": lambda self: {
+                    "allowed": True,
+                    "route_id": route_id,
+                    "side": side,
+                    "sample_count": 0,
+                    "profit_factor": 0.0,
+                    "net_pnl_usdt": 0.0,
+                    "stop_loss_ratio": 0.0,
+                    "avg_r_multiple": 0.0,
+                    "reasons": [],
+                },
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.record_balance_snapshot",
+        lambda payload, market, note="", scope=None: (
+            type(
+                "Snapshot",
+                (),
+                {
+                    "wallet_balance_usdt": 5000.0,
+                    "available_balance_usdt": 5000.0,
+                    "unrealized_pnl_usdt": 0.0,
+                    "equity_usdt": 5000.0,
+                },
+            )(),
+            ChallengeState(),
+        ),
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.professional_entry_gate.read_closed_trade_reviews",
+        lambda: [
+            {
+                "symbol": "ETHUSDT",
+                "side": "BUY",
+                "route_id": "eth-core",
+                "exit_reason": "take_profit",
+                "realized_pnl_usdt": 1.0,
+                "realized_r_multiple": 1.2,
+            }
+            for _ in range(8)
+        ],
+    )
+
+    plan = build_live_execution_plan(
+        FakeSettings(),
+        strategy,
+        analysis_payload,
+        margin_notional_usdt=100.0,
+        execution_mode="testnet_exploration",
+    )
+
+    mtf = plan.professional_entry_gate["layers"]["multi_timeframe_trend"]
+    assert mtf["passed"] is False
+    assert mtf["bias"] == "short"
+    assert any("Multi-timeframe trend conflicts" in item for item in plan.violations)

@@ -19,6 +19,8 @@ from .portfolio_construction import (
     build_portfolio_target,
 )
 from .professional_system_audit import DEFAULT_BLUEPRINT_PATH, run_professional_system_audit
+from .route_risk_control import route_quarantine_status
+from .side_risk_policy import evaluate_route_side_risk
 from .signal_api import append_trading_signal, signal_api_contract
 from .signal_schema import TradingSignal, build_signal_id
 from .skipped_signal_journal import append_skipped_signal
@@ -219,6 +221,13 @@ def _signal_from_market_bot_row(
     family = str(row.get("strategy_family") or "unknown")
     side = _side_from_row(row)
     route_id = _row_route_id(row)
+    route_quarantine = route_quarantine_status(route_id)
+    if route_quarantine.get("quarantined"):
+        reasons = "; ".join(str(item) for item in (route_quarantine.get("reasons") or []))
+        blockers.append(f"route-quarantined:{route_id}:{reasons or 'manual-review-required'}")
+    route_side_risk = evaluate_route_side_risk(route_id=route_id, side=side)
+    if not route_side_risk.allowed:
+        blockers.extend(route_side_risk.reasons)
     return TradingSignal(
         signal_id=build_signal_id(symbol, interval, family, side),
         symbol=symbol,
@@ -243,6 +252,8 @@ def _signal_from_market_bot_row(
             "accepted_count": gate.get("accepted_count"),
             "targets": targets,
             "research_state": row.get("research_state"),
+            "route_quarantine": route_quarantine,
+            "route_side_risk": route_side_risk.to_dict(),
             "machine_only": True,
         },
     )
@@ -327,6 +338,15 @@ def _best_signal_from_alpha(alpha: dict[str, Any]) -> TradingSignal:
             blockers.append("profit-factor-below-floor")
         if _int(metrics.get("trade_count") or alpha.get("trade_count")) < 100:
             blockers.append("trade-count-below-floor")
+        route_quarantine = route_quarantine_status(route_id)
+        if route_quarantine.get("quarantined"):
+            reasons = "; ".join(str(item) for item in (route_quarantine.get("reasons") or []))
+            blockers.append(f"route-quarantined:{route_id}:{reasons or 'manual-review-required'}")
+            selected["metadata"]["route_quarantine"] = route_quarantine
+        route_side_risk = evaluate_route_side_risk(route_id=route_id, side=side)
+        if not route_side_risk.allowed:
+            blockers.extend(route_side_risk.reasons)
+        selected["metadata"]["route_side_risk"] = route_side_risk.to_dict()
     return TradingSignal(
         signal_id=build_signal_id(symbol, interval, family, side),
         symbol=symbol,
@@ -361,6 +381,7 @@ def _blocker_taxonomy(blockers: list[str]) -> dict[str, list[str]]:
     taxonomy = {
         "alpha": [],
         "portfolio": [],
+        "route_history": [],
         "committee": [],
         "architecture": [],
         "readiness": [],
@@ -368,7 +389,9 @@ def _blocker_taxonomy(blockers: list[str]) -> dict[str, list[str]]:
     }
     for blocker in blockers:
         lowered = blocker.lower()
-        if "alpha" in lowered or "expectancy" in lowered or "payoff" in lowered or "profit-factor" in lowered:
+        if "route-quarantined" in lowered or "route-side" in lowered or "historical" in lowered:
+            taxonomy["route_history"].append(blocker)
+        elif "alpha" in lowered or "expectancy" in lowered or "payoff" in lowered or "profit-factor" in lowered:
             taxonomy["alpha"].append(blocker)
         elif "portfolio" in lowered or "symbol-open-risk" in lowered or "correlation" in lowered:
             taxonomy["portfolio"].append(blocker)
@@ -390,6 +413,8 @@ def _candidate_next_action(gate: OpenOrderGate, taxonomy: dict[str, list[str]]) 
         return "return_to_alpha_research_or_expand_sample", "research_blocked"
     if taxonomy.get("portfolio"):
         return "reduce_portfolio_or_correlation_risk_before_scan", "portfolio_blocked"
+    if taxonomy.get("route_history"):
+        return "repair_route_history_or_wait_for_quarantine_clear", "route_history_blocked"
     if taxonomy.get("committee"):
         return "hold_for_structured_review", "committee_blocked"
     if taxonomy.get("architecture"):
@@ -467,6 +492,19 @@ def _machine_strategy_directive(
             blocked_surface="paper_order,testnet_order,live_readiness_scan",
             next_commands=[
                 "openclaw-quantctl loss-diagnostics --min-bucket-trades 5 --top-n 20 --compact"
+            ],
+        )
+    if taxonomy.get("route_history"):
+        return MachineStrategyDirective(
+            directive="quarantine",
+            objective="keep_negative_route_history_out_of_candidate_selection",
+            priority_score=priority,
+            reason="route is quarantined or route-side history is not cleared for promotion",
+            allowed_surface="loss_diagnostics,route_risk_status,risk_combo_sweep,manual_quarantine_review",
+            blocked_surface="paper_order,testnet_order,live_readiness_scan",
+            next_commands=[
+                f"openclaw-quantctl route-risk-status --route-id {signal.route_id} --compact",
+                f"openclaw-quantctl risk-combo-sweep --routes {signal.route_id} --compact",
             ],
         )
     if taxonomy.get("portfolio"):

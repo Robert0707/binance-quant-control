@@ -19,6 +19,8 @@ def test_cmd_ai_market_sentinel_compact_is_machine_readable(monkeypatch) -> None
             "route_risk": {"active_quarantined_routes": ["btc-core"]},
             "readiness": {"allowed_count": 0},
             "expansion_gate": {"allowed": False},
+            "conditional_order_alert": {"should_notify": False, "reason": "no-readiness-approved-candidate"},
+            "telegram": {"sent": False, "reason": "send_telegram disabled"},
             "machine_action_queue": [{"action": "run_position_guardian"}],
             "errors": [],
             "report_path": "state/ai-market-sentinel/report.json",
@@ -40,6 +42,8 @@ def test_cmd_ai_market_sentinel_compact_is_machine_readable(monkeypatch) -> None
             blueprint_config="config/professional-system-blueprint.default.yaml",
             output_dir="",
             skip_readiness=False,
+            send_telegram=False,
+            max_readiness_candidates=6,
             compact=True,
         )
     )
@@ -48,6 +52,8 @@ def test_cmd_ai_market_sentinel_compact_is_machine_readable(monkeypatch) -> None
     payload = captured["payload"]  # type: ignore[assignment]
     assert payload["mode"] == "ai_market_sentinel_v1"  # type: ignore[index]
     assert payload["position_state"]["open_position_count"] == 1  # type: ignore[index]
+    assert payload["conditional_order_alert"]["should_notify"] is False  # type: ignore[index]
+    assert payload["telegram"]["sent"] is False  # type: ignore[index]
     assert payload["machine_action_queue"][0]["action"] == "run_position_guardian"  # type: ignore[index]
 
 

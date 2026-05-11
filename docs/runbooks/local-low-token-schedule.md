@@ -60,7 +60,13 @@ openclaw-quantctl trading-control-status --compact
 openclaw-quantctl positions --compact
 openclaw-quantctl route-risk-status --compact
 openclaw-quantctl ai-market-sentinel --skip-readiness --compact
+openclaw-quantctl ai-market-sentinel --max-readiness-candidates 6 --compact
 ```
+
+Use `--send-telegram` only for manual/full sentinel checks where a
+readiness-approved conditional-order candidate should be pushed to Telegram.
+High-frequency timer mode should keep `--skip-readiness` to avoid unnecessary
+candidate rescans.
 
 ## Heavy Research
 

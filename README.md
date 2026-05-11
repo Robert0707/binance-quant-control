@@ -82,6 +82,19 @@ openclaw-quantctl ai-market-sentinel --skip-readiness --compact
 openclaw-quantctl ai-market-sentinel --compact
 ```
 
+New symbol to trade pipeline:
+
+```bash
+openclaw-quantctl route-intent "把 SOLUSDT 從新幣審核到可交易"
+openclaw-quantctl route-symbol SOLUSDT
+openclaw-quantctl feature-dataset --symbols SOLUSDT --compact
+openclaw-quantctl risk-combo-sweep --symbols SOLUSDT --compact
+openclaw-quantctl risk-combo-matrix --latest-sweeps 4 --compact
+openclaw-quantctl hermes-ai-trader --compact
+openclaw-quantctl ai-readiness-scan --compact
+openclaw-quantctl operator-dashboard --compact
+```
+
 Hermes trade cycle dry run:
 
 ```bash
@@ -202,5 +215,6 @@ git check-ignore -v .env state reports .venv hailort.log
 - `docs/runbooks/local-low-token-schedule.md`: local timer policy.
 - `docs/runbooks/ai-market-sentinel-24h.md`: read-only 24h watch loop.
 - `docs/runbooks/stoploss-takeprofit-policy.md`: stop-loss and staged take-profit policy.
+- `docs/workflows/new-symbol-to-trade-pipeline.md`: full evidence-first path from a new symbol to paper/testnet eligibility.
 - `docs/workflows/market-bot-expectancy-research-pipeline.md`: positive-expectancy research flow.
 - `docs/architecture/hermes-ai-trader-v2.md`: AI trader control-plane architecture.

@@ -7,6 +7,7 @@ from typing import Any
 
 from .binance_api import BinanceAPIError, BinanceClient
 from .config import STATE_DIR, Settings, ensure_runtime_dirs
+from .decision_audit import run_decision_audit
 from .loss_diagnostics import run_loss_diagnostics
 from .order_journal import (
     read_live_orders,
@@ -16,6 +17,8 @@ from .order_journal import (
 
 OPERATOR_DASHBOARD_DIR = STATE_DIR / "operator-dashboard"
 N8N_DIGEST_DIR = STATE_DIR / "n8n-digests"
+RISK_COMBO_MATRIX_DIR = STATE_DIR / "risk-combo-matrix"
+RISK_COMBO_SWEEP_DIR = STATE_DIR / "risk-combo-sweeps"
 
 
 def _utc_now() -> datetime:
@@ -295,11 +298,233 @@ def _load_latest_digest_summary(digest_dir: Path = N8N_DIGEST_DIR) -> dict[str, 
     }
 
 
+def _compact_risk_combo_surface(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "surface": row.get("surface"),
+        "target_side": row.get("target_side"),
+        "target_interval": row.get("target_interval"),
+        "route_id": row.get("route_id"),
+        "symbol": row.get("symbol"),
+        "research_status": row.get("research_status"),
+        "recovery_gate_passed": row.get("recovery_gate_passed"),
+        "robust_recovery_gate_passed": row.get("robust_recovery_gate_passed"),
+        "full": row.get("full"),
+        "test": row.get("test"),
+        "walk_forward": row.get("walk_forward"),
+        "gate_reasons": row.get("gate_reasons"),
+        "source_report_path": row.get("source_report_path"),
+    }
+
+
+def _compact_validation_plan_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "surface": item.get("surface"),
+        "symbol": item.get("symbol"),
+        "target_side": item.get("target_side"),
+        "target_interval": item.get("target_interval"),
+        "purpose": item.get("purpose"),
+        "interactive_probe_command": item.get("interactive_probe_command"),
+        "offline_validation_command": item.get("offline_validation_command"),
+        "runtime_guidance": item.get("runtime_guidance"),
+        "promotion_boundary": item.get("promotion_boundary"),
+    }
+
+
+def _default_matrix_risk_boundary() -> dict[str, Any]:
+    return {
+        "max_per_trade_risk_pct": 0.025,
+        "max_per_trade_risk_percent": 2.5,
+        "risk_ceiling_source": "operator_dashboard_default_for_legacy_matrix",
+        "applies_to": "all_research_candidates_before_any_promotion",
+        "changes_position_sizing": False,
+        "opens_orders": False,
+        "writes_execution_config": False,
+        "mainnet_live_allowed": False,
+    }
+
+
+def _repair_plan_with_risk_boundary(item: dict[str, Any]) -> dict[str, Any]:
+    row = dict(item)
+    guardrails = row.get("guardrails") if isinstance(row.get("guardrails"), dict) else {}
+    row["guardrails"] = {
+        **guardrails,
+        "max_per_trade_risk_pct": guardrails.get("max_per_trade_risk_pct", 0.025),
+        "max_per_trade_risk_percent": guardrails.get("max_per_trade_risk_percent", 2.5),
+        "mainnet_live_allowed": bool(guardrails.get("mainnet_live_allowed")),
+    }
+    return row
+
+
+def _risk_combo_matrix_freshness(matrix_path: Path, *, sweep_dir: Path | None = None) -> dict[str, Any]:
+    sweep_dir = sweep_dir or RISK_COMBO_SWEEP_DIR
+    sweep_paths = sorted(
+        sweep_dir.glob("*-risk-combo-sweep.json") if sweep_dir.exists() else [],
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    if not sweep_paths:
+        return {
+            "status": "no_sweep_reports_found",
+            "latest_sweep_path": None,
+            "newer_sweep_count": 0,
+            "newer_sweep_paths": [],
+            "action": "run risk-combo-sweep before relying on the matrix for research coverage",
+        }
+    matrix_mtime = matrix_path.stat().st_mtime
+    newer_paths = [path for path in sweep_paths if path.stat().st_mtime > matrix_mtime]
+    latest_sweep = sweep_paths[0]
+    return {
+        "status": "stale_after_new_sweeps" if newer_paths else "current",
+        "matrix_path": str(matrix_path),
+        "matrix_mtime": datetime.fromtimestamp(matrix_mtime, timezone.utc).replace(microsecond=0).isoformat(),
+        "latest_sweep_path": str(latest_sweep),
+        "latest_sweep_mtime": datetime.fromtimestamp(latest_sweep.stat().st_mtime, timezone.utc)
+        .replace(microsecond=0)
+        .isoformat(),
+        "newer_sweep_count": len(newer_paths),
+        "newer_sweep_paths": [str(path) for path in newer_paths[:5]],
+        "action": (
+            "rebuild risk-combo-matrix with the newer sweep reports before judging BUY/SELL coverage"
+            if newer_paths
+            else "matrix includes all sweep reports newer than or equal to its build time"
+        ),
+    }
+
+
+def _load_latest_risk_combo_matrix_summary(
+    matrix_dir: Path | None = None,
+    *,
+    plan_limit: int = 2,
+    sweep_dir: Path | None = None,
+) -> dict[str, Any]:
+    matrix_dir = matrix_dir or RISK_COMBO_MATRIX_DIR
+    candidates = sorted(
+        matrix_dir.glob("*-risk-combo-matrix.json") if matrix_dir.exists() else [],
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return {
+            "available": False,
+            "reason": "no-risk-combo-matrix-report-found",
+            "automation": "run risk-combo-matrix after research sweeps to summarize BUY/SELL x interval evidence",
+            "mainnet_live_allowed": False,
+        }
+    latest = candidates[0]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "reason": f"latest-risk-combo-matrix-unreadable: {exc}",
+            "path": str(latest),
+            "mainnet_live_allowed": False,
+        }
+
+    best_surface = payload.get("best_surface") if isinstance(payload.get("best_surface"), dict) else {}
+    validation_plan = payload.get("validation_plan") if isinstance(payload.get("validation_plan"), list) else []
+    repair_plan = (
+        payload.get("negative_surface_repair_plan")
+        if isinstance(payload.get("negative_surface_repair_plan"), list)
+        else []
+    )
+    safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
+    promotion_boundary = (
+        payload.get("promotion_boundary") if isinstance(payload.get("promotion_boundary"), dict) else {}
+    )
+    risk_boundary = (
+        payload.get("risk_boundary") if isinstance(payload.get("risk_boundary"), dict) else _default_matrix_risk_boundary()
+    )
+    promotion_boundary = {
+        **promotion_boundary,
+        "requires_robust_recovery_gate": promotion_boundary.get("requires_robust_recovery_gate", True),
+        "requires_sufficient_test_trades": promotion_boundary.get("requires_sufficient_test_trades", True),
+        "max_per_trade_risk_pct": promotion_boundary.get("max_per_trade_risk_pct", 0.025),
+        "max_per_trade_risk_percent": promotion_boundary.get("max_per_trade_risk_percent", 2.5),
+        "mainnet_live_allowed": bool(promotion_boundary.get("mainnet_live_allowed")),
+    }
+    robust_surface_count = int(_float(payload.get("robust_surface_count")))
+    promising_surface_count = int(_float(payload.get("promising_surface_count")))
+    if robust_surface_count > 0:
+        status = "robust_research_candidate_found"
+    elif promising_surface_count > 0:
+        status = "promising_research_only"
+    else:
+        status = "no_promising_surface"
+
+    return {
+        "available": True,
+        "status": status,
+        "path": str(latest),
+        "freshness": _risk_combo_matrix_freshness(latest, sweep_dir=sweep_dir),
+        "generated_at": payload.get("generated_at"),
+        "mode": payload.get("mode"),
+        "input_report_count": int(_float(payload.get("input_report_count"))),
+        "skipped_input_report_count": int(_float(payload.get("skipped_input_report_count"))),
+        "skipped_input_reports": payload.get("skipped_input_reports")
+        if isinstance(payload.get("skipped_input_reports"), list)
+        else [],
+        "surface_count": int(_float(payload.get("surface_count"))),
+        "promising_surface_count": promising_surface_count,
+        "emerging_positive_lead_count": int(_float(payload.get("emerging_positive_lead_count"))),
+        "superseded_emerging_positive_lead_count": int(
+            _float(payload.get("superseded_emerging_positive_lead_count"))
+        ),
+        "recent_failed_repair_identity_count": int(_float(payload.get("recent_failed_repair_identity_count"))),
+        "robust_surface_count": robust_surface_count,
+        "side_summary": payload.get("side_summary") if isinstance(payload.get("side_summary"), dict) else {},
+        "horizon_summary": payload.get("horizon_summary") if isinstance(payload.get("horizon_summary"), dict) else {},
+        "completion_audit": payload.get("completion_audit")
+        if isinstance(payload.get("completion_audit"), dict)
+        else {},
+        "objective_scorecard": payload.get("objective_scorecard")
+        if isinstance(payload.get("objective_scorecard"), dict)
+        else {},
+        "prompt_to_artifact_checklist": payload.get("prompt_to_artifact_checklist")
+        if isinstance(payload.get("prompt_to_artifact_checklist"), dict)
+        else {},
+        "risk_boundary": risk_boundary,
+        "safety": {
+            "opens_orders": bool(safety.get("opens_orders")),
+            "writes_execution_config": bool(safety.get("writes_execution_config")),
+            "clears_route_quarantine": bool(safety.get("clears_route_quarantine")),
+            "mainnet_live_allowed": bool(safety.get("mainnet_live_allowed")),
+        },
+        "mainnet_live_allowed": bool(
+            safety.get("mainnet_live_allowed") or promotion_boundary.get("mainnet_live_allowed")
+        ),
+        "best_surface": _compact_risk_combo_surface(best_surface) if best_surface else None,
+        "emerging_positive_leads": [
+            _compact_risk_combo_surface(item)
+            for item in (payload.get("emerging_positive_leads") or [])[: max(int(plan_limit), 0)]
+            if isinstance(item, dict)
+        ],
+        "superseded_emerging_positive_leads": [
+            _compact_risk_combo_surface(item)
+            for item in (payload.get("superseded_emerging_positive_leads") or [])[: max(int(plan_limit), 0)]
+            if isinstance(item, dict)
+        ],
+        "validation_plan": [
+            _compact_validation_plan_item(item)
+            for item in validation_plan[: max(int(plan_limit), 0)]
+            if isinstance(item, dict)
+        ],
+        "negative_surface_repair_plan": [
+            _repair_plan_with_risk_boundary(item)
+            for item in repair_plan[: max(int(plan_limit), 0)]
+            if isinstance(item, dict)
+        ],
+        "next_research_actions": payload.get("next_research_actions") or [],
+        "promotion_boundary": promotion_boundary,
+    }
+
+
 def _build_customer_feedback(
     *,
     position_count: int,
     unrealized_pnl: float,
     realized_pnl: float,
+    live_order_journal_count: int,
     loss_findings: list[str],
     protective_warnings: list[str],
     digest_summary: dict[str, Any],
@@ -307,6 +532,11 @@ def _build_customer_feedback(
     feedback: list[str] = []
     if position_count <= 0:
         feedback.append("No open testnet positions; explorer should keep scanning until an allowed candidate appears.")
+        if live_order_journal_count > 0:
+            feedback.append(
+                "Live/testnet order journal has historical entries, but the exchange position check is flat; "
+                "treat journal count as audit history, not current exposure."
+            )
     elif unrealized_pnl > 0:
         feedback.append("Current open basket is profitable; keep guardian active and let TP/trailing rules work.")
     elif unrealized_pnl < 0:
@@ -335,6 +565,102 @@ def _build_customer_feedback(
     return feedback
 
 
+def _build_product_readiness(
+    *,
+    settings: Settings,
+    position_error: str,
+    position_count: int,
+    protective_warnings: list[str],
+    closed_summary: dict[str, Any],
+    loss_summary: dict[str, Any],
+) -> dict[str, Any]:
+    blockers: list[str] = []
+    warnings: list[str] = []
+    strengths: list[str] = []
+
+    profit_factor = _float(loss_summary.get("profit_factor"), _float(closed_summary.get("profit_factor")))
+    avg_r = _float(loss_summary.get("avg_r"))
+    stop_loss_ratio = _float(loss_summary.get("stop_loss_ratio"), _float(closed_summary.get("pure_stop_loss_ratio")))
+    closed_count = int(_float(closed_summary.get("count")))
+    realized_pnl = _float(closed_summary.get("total_realized_pnl_usdt"))
+
+    if position_error:
+        blockers.append(f"exchange_position_check_unavailable:{position_error}")
+    if settings.live_trading_enabled:
+        warnings.append("mainnet_live_trading_enabled; verify explicit operator approval and readiness before customer use")
+    else:
+        blockers.append("mainnet_live_trading_disabled")
+    if closed_count <= 0:
+        blockers.append("no_closed_trade_evidence")
+    if realized_pnl < 0:
+        blockers.append(f"negative_realized_pnl:{realized_pnl:.4f}USDT")
+    if profit_factor < 1.0:
+        blockers.append(f"profit_factor_below_breakeven:{profit_factor:.4f}")
+    if avg_r < 0.0:
+        blockers.append(f"negative_average_r:{avg_r:.4f}")
+    if stop_loss_ratio > 65.0:
+        blockers.append(f"stop_loss_ratio_high:{stop_loss_ratio:.2f}%")
+    if protective_warnings:
+        blockers.append("protective_coverage_attention")
+
+    if settings.use_testnet:
+        strengths.append("testnet_mode_enabled")
+    if not settings.live_trading_enabled:
+        strengths.append("mainnet_safety_lock_enabled")
+    if position_count == 0:
+        strengths.append("no_current_exchange_exposure")
+    if position_count > 0 and not protective_warnings:
+        strengths.append("open_positions_have_protective_coverage")
+
+    profitability_evidence = (
+        closed_count >= 100
+        and realized_pnl > 0
+        and profit_factor >= 1.2
+        and avg_r > 0.05
+        and stop_loss_ratio <= 55.0
+    )
+    testnet_trade_ready = (
+        not position_error
+        and not protective_warnings
+        and settings.testnet_trading_enabled
+        and profit_factor >= 0.85
+        and avg_r >= -0.05
+        and stop_loss_ratio <= 65.0
+    )
+    mainnet_customer_ready = settings.live_trading_enabled and profitability_evidence and not blockers
+    if mainnet_customer_ready:
+        stage = "customer_trade_ready"
+        status = "ready"
+        next_action = "operate_with_guardian_and_closed_trade_review"
+    elif testnet_trade_ready:
+        stage = "testnet_exploration_only"
+        status = "conditional"
+        next_action = "continue_testnet_with_readiness_scan_and_operator_approval"
+    else:
+        stage = "watch_only_research"
+        status = "blocked"
+        next_action = "repair_expectancy_before_enabling_entries"
+
+    return {
+        "status": status,
+        "stage": stage,
+        "mainnet_customer_ready": mainnet_customer_ready,
+        "testnet_trade_ready": testnet_trade_ready,
+        "profitability_evidence": profitability_evidence,
+        "metrics": {
+            "closed_trade_count": closed_count,
+            "realized_pnl_usdt": round(realized_pnl, 6),
+            "profit_factor": round(profit_factor, 4),
+            "avg_r": round(avg_r, 4),
+            "stop_loss_ratio": round(stop_loss_ratio, 2),
+        },
+        "blockers": blockers,
+        "warnings": warnings,
+        "strengths": strengths,
+        "next_action": next_action,
+    }
+
+
 def build_operator_dashboard(
     settings: Settings,
     *,
@@ -347,10 +673,26 @@ def build_operator_dashboard(
     positions, position_error = _load_positions(settings)
     protective, protective_warnings = _protective_summary_for_open_positions(settings, positions)
     closed_summary = summarize_closed_trade_reviews()
+    live_order_summary = summarize_live_orders()
     loss_report = run_loss_diagnostics(min_bucket_trades=min_bucket_trades, top_n=top_n)
+    decision_audit = run_decision_audit(
+        output_dir=OPERATOR_DASHBOARD_DIR / "decision-audit",
+        since_contract=True,
+    )
+    loss_summary = loss_report.get("summary") if isinstance(loss_report.get("summary"), dict) else {}
     digest_summary = _load_latest_digest_summary()
+    risk_combo_matrix = _load_latest_risk_combo_matrix_summary()
     unrealized_pnl = round(sum(_float(item.get("unrealized_pnl_usdt")) for item in positions), 6)
     realized_pnl = _float(closed_summary.get("total_realized_pnl_usdt"))
+    live_order_journal_count = int(live_order_summary.get("count") or 0)
+    product_readiness = _build_product_readiness(
+        settings=settings,
+        position_error=position_error,
+        position_count=len(positions),
+        protective_warnings=protective_warnings,
+        closed_summary=closed_summary,
+        loss_summary=loss_summary,
+    )
 
     payload = {
         "generated_at": _utc_now().isoformat(),
@@ -366,13 +708,30 @@ def build_operator_dashboard(
             "open_unrealized_pnl_usdt": unrealized_pnl,
             "closed_review_count": closed_summary.get("count", 0),
             "closed_realized_pnl_usdt": round(realized_pnl, 6),
-            "live_order_count": summarize_live_orders().get("count", 0),
+            "live_order_count": live_order_journal_count,
+            "live_order_count_meaning": "append_only_live_testnet_order_journal_records_not_current_open_orders",
         },
         "positions": positions,
         "protective_orders": protective,
         "recent_entry_orders": _recent_live_orders_for_positions(positions),
+        "execution_journal": {
+            "record_count": live_order_journal_count,
+            "buy_count": live_order_summary.get("buy_count", 0),
+            "sell_count": live_order_summary.get("sell_count", 0),
+            "latest": live_order_summary.get("latest"),
+            "meaning": "append-only order audit history; current exposure comes from positions/protective_orders",
+        },
+        "product_readiness": product_readiness,
+        "decision_artifact_audit": {
+            "status": decision_audit.get("status"),
+            "scope": decision_audit.get("scope"),
+            "summary": decision_audit.get("summary"),
+            "invalid_artifacts": decision_audit.get("invalid_artifacts"),
+            "report_path": decision_audit.get("report_path"),
+        },
+        "risk_combo_matrix": risk_combo_matrix,
         "loss_diagnostics": {
-            "summary": loss_report.get("summary"),
+            "summary": loss_summary,
             "findings": loss_report.get("findings", [])[:top_n],
             "worst_buckets": loss_report.get("worst_buckets", [])[:top_n],
             "root_cause_recommendations": loss_report.get("root_cause_recommendations", [])[:top_n],
@@ -383,6 +742,7 @@ def build_operator_dashboard(
             position_count=len(positions),
             unrealized_pnl=unrealized_pnl,
             realized_pnl=realized_pnl,
+            live_order_journal_count=live_order_journal_count,
             loss_findings=list(loss_report.get("findings", [])),
             protective_warnings=protective_warnings,
             digest_summary=digest_summary,

@@ -20,19 +20,24 @@ def score_price_structure(latest: dict[str, Any], analysis: dict[str, Any]) -> f
     return round(_clamp(price_structure), 3)
 
 
-def score_flow(latest: dict[str, Any]) -> float:
+def score_flow(latest: dict[str, Any], *, side: str = "BUY") -> float:
+    direction = -1.0 if str(side or "").upper() == "SELL" else 1.0
     volume_z = float(latest.get("volume_zscore_20") or 0.0)
     obv_z = float(latest.get("obv_zscore_20") or 0.0)
     whale_pressure = float(latest.get("whale_hunter_24h_oi") or 0.0)
     taker_ratio = float(latest.get("taker_buy_sell_ratio") or 1.0)
     order_book_imbalance = float(latest.get("order_book_imbalance") or 0.0)
+    directional_obv = obv_z * direction
+    directional_whale = whale_pressure * direction
+    directional_taker = (taker_ratio - 1.0) * direction
+    directional_book = order_book_imbalance * direction
     flow = (
         50.0
         + (volume_z * 12.0)
-        + (obv_z * 10.0)
-        + (whale_pressure * 18.0)
-        + ((taker_ratio - 1.0) * 30.0)
-        + (order_book_imbalance * 25.0)
+        + (directional_obv * 10.0)
+        + (directional_whale * 18.0)
+        + (directional_taker * 30.0)
+        + (directional_book * 25.0)
     )
     return round(_clamp(flow), 3)
 
@@ -58,23 +63,25 @@ def score_execution_quality(
     latest: dict[str, Any],
     trade_plan: dict[str, Any],
     *,
+    side: str = "BUY",
     fee_bps: float = 4.0,
     slippage_bps: float = 2.0,
 ) -> float:
     price = float(latest.get("close") or latest.get("price") or 0.0)
     if price <= 0.0:
         return 35.0
-    long_plan = trade_plan.get("long") or {}
-    invalidation = float(long_plan.get("invalidation") or 0.0)
-    take_profit = float(long_plan.get("take_profit_1") or 0.0)
-    take_profit_levels = long_plan.get("take_profit_levels")
+    side_key = "short" if str(side or "").upper() == "SELL" else "long"
+    side_plan = trade_plan.get(side_key) or {}
+    invalidation = float(side_plan.get("invalidation") or 0.0)
+    take_profit = float(side_plan.get("take_profit_1") or 0.0)
+    take_profit_levels = side_plan.get("take_profit_levels")
     if isinstance(take_profit_levels, list):
         tp_values = [float(item) for item in take_profit_levels if float(item or 0.0) > 0.0]
     else:
         tp_values = [
-            float(long_plan[key])
+            float(side_plan[key])
             for key in ("take_profit_1", "take_profit_2", "take_profit_3")
-            if key in long_plan and float(long_plan.get(key) or 0.0) > 0.0
+            if key in side_plan and float(side_plan.get(key) or 0.0) > 0.0
         ]
     risk_distance = abs(price - invalidation) if invalidation > 0 else 0.0
     reward_distance = abs(take_profit - price) if take_profit > 0 else 0.0
@@ -126,15 +133,17 @@ def build_signal_scores(
     analysis: dict[str, Any],
     trade_plan: dict[str, Any],
     news_risk: dict[str, Any] | None = None,
+    side: str = "BUY",
     fee_bps: float = 4.0,
     slippage_bps: float = 2.0,
 ) -> dict[str, float]:
     price_structure_score = score_price_structure(latest, analysis)
-    flow_score = score_flow(latest)
+    flow_score = score_flow(latest, side=side)
     event_risk_score = score_event_risk(news_risk)
     execution_quality_score = score_execution_quality(
         latest,
         trade_plan,
+        side=side,
         fee_bps=fee_bps,
         slippage_bps=slippage_bps,
     )

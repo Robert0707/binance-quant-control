@@ -432,6 +432,7 @@ def _candidate_quality(
     route: Any,
     trade_plan: dict[str, Any],
     news_risk: dict[str, Any] | None = None,
+    side: str = "BUY",
 ) -> dict[str, Any]:
     signal_scores = build_signal_scores(
         route=route,
@@ -439,6 +440,7 @@ def _candidate_quality(
         analysis=analysis,
         trade_plan=trade_plan,
         news_risk=news_risk,
+        side=side,
     )
     return {
         "score": signal_scores["composite_convergence_score"],
@@ -465,12 +467,14 @@ def run_quant_analysis(symbol: str, market: str, interval: str) -> dict[str, Any
     score = float(analysis.get("score") or 0.0)
     convergence = float(analysis.get("convergence") or 0.0)
     direction = "long" if "long" in bias else "short" if "short" in bias else "neutral"
+    side = "SELL" if direction == "short" else "BUY"
     route = resolve_symbol_route(str(payload.get("symbol", symbol.upper())))
     quality = _candidate_quality(
         latest,
         analysis,
         route=route,
         trade_plan=payload.get("trade_plan") or {},
+        side=side,
     )
     composite = round((score * convergence * 0.4) + (float(quality["score"]) * 0.6) + min(adx, 25.0) * 0.25, 3)
     return {
@@ -502,6 +506,7 @@ def candidate_is_tradeable(item: dict[str, Any]) -> bool:
             analysis,
             route=route,
             trade_plan=item.get("trade_plan") or {},
+            side="SELL" if str(item.get("direction") or "") == "short" else "BUY",
         )
     direction = str(item.get("direction") or "neutral")
     if direction not in {"long", "short"}:

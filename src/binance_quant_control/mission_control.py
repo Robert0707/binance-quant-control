@@ -156,6 +156,7 @@ def _build_paper_record(
         latest=analysis_payload.get("latest") or {},
         analysis=analysis_payload.get("analysis") or {},
         trade_plan=analysis_payload.get("trade_plan") or {},
+        side=side,
     )
     return PaperOrderRecord(
         generated_at=_utc_now().isoformat(),
@@ -307,6 +308,7 @@ def run_trading_mission(
             latest=analysis_payload.get("latest") or {},
             analysis=analysis_payload.get("analysis") or {},
             trade_plan=analysis_payload.get("trade_plan") or {},
+            side=mission_candidate_side(analysis_payload) or "BUY",
         )
         symbol_reports.append(
             {

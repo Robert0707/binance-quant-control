@@ -30,3 +30,15 @@ def test_resolve_operator_intent_maps_start_and_end_trading() -> None:
     assert start.actions == ("trade-session start",)
     assert stop.intent_id == "hermes-stop-continuous-testnet-trading"
     assert stop.actions == ("trade-session stop",)
+
+
+def test_resolve_operator_intent_maps_new_symbol_trade_pipeline() -> None:
+    intent = resolve_operator_intent(
+        "將任意幣丟進去，從新幣到交易做成流水線並完美嵌入Hermes",
+        Path("config/operator-intent.default.yaml"),
+    )
+
+    assert intent.intent_id == "new-symbol-trade-pipeline"
+    assert "risk-combo-sweep" in intent.actions
+    assert "decision-audit" in intent.actions
+    assert "docs/workflows/new-symbol-to-trade-pipeline.md" in intent.resources

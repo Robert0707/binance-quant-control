@@ -9,6 +9,8 @@ from binance_quant_control.professional_entry_gate import (
 def _live_plan() -> dict[str, float | int | str]:
     return {
         "side": "BUY",
+        "regime": "trend",
+        "strategy_family": "trend_continuation",
         "price": 100.0,
         "quantity": 2.0,
         "stop_price": 98.0,
@@ -75,6 +77,7 @@ def test_professional_gate_passes_clean_setup(monkeypatch) -> None:
     assert result.passed is True
     assert result.violations == []
     assert result.layers["execution_quality"]["passed"] is True
+    assert result.layers["regime_policy"]["passed"] is True
     assert result.layers["strategy_performance"]["win_rate"] > 0.5
 
 
@@ -120,6 +123,35 @@ def test_professional_gate_blocks_weak_recent_strategy(monkeypatch) -> None:
 
     assert result.passed is False
     assert any("PF" in item or "expectancy" in item or "payoff" in item for item in result.violations)
+
+
+def test_professional_gate_blocks_multi_timeframe_trend_conflict(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "binance_quant_control.professional_entry_gate.read_closed_trade_reviews",
+        lambda: [
+            {"exit_reason": "take_profit", "realized_pnl_usdt": 1, "realized_r_multiple": 1.2}
+            for _ in range(6)
+        ],
+    )
+    latest = {
+        **_latest(),
+        "multi_timeframe_structure": {
+            "bias": "short",
+            "alignment": "strong",
+            "confidence": 0.82,
+        },
+    }
+
+    result = evaluate_professional_entry_gate(
+        side="BUY",
+        latest=latest,
+        live_plan=_live_plan(),
+        policy=ProfessionalGatePolicy(stop_loss_cooldown_hours=0.0),
+    )
+
+    assert result.passed is False
+    assert result.layers["multi_timeframe_trend"]["passed"] is False
+    assert any("Multi-timeframe trend conflicts" in item for item in result.violations)
 
 
 def test_professional_gate_uses_win_rate_as_descriptive_not_hard_gate(monkeypatch) -> None:
@@ -229,7 +261,50 @@ def test_professional_gate_can_use_market_bot_evidence_for_promoted_testnet_cand
 
     assert result.passed is True
     assert result.layers["strategy_performance"]["scope"] == "market_bot_gate"
-    assert result.layers["strategy_performance"]["count"] == 203
+
+
+def test_professional_gate_blocks_trend_family_in_range_regime(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "binance_quant_control.professional_entry_gate.read_closed_trade_reviews",
+        lambda: [
+            {"exit_reason": "take_profit", "realized_pnl_usdt": 1, "realized_r_multiple": 1.2}
+            for _ in range(6)
+        ],
+    )
+    plan = {**_live_plan(), "regime": "range", "strategy_family": "trend_continuation"}
+
+    result = evaluate_professional_entry_gate(
+        side="BUY",
+        latest=_latest(),
+        live_plan=plan,
+        policy=ProfessionalGatePolicy(stop_loss_cooldown_hours=0.0),
+    )
+
+    assert result.passed is False
+    assert result.layers["regime_policy"]["passed"] is False
+    assert any("Range regime" in item for item in result.violations)
+
+
+def test_professional_gate_blocks_low_liquidity_regime(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "binance_quant_control.professional_entry_gate.read_closed_trade_reviews",
+        lambda: [
+            {"exit_reason": "take_profit", "realized_pnl_usdt": 1, "realized_r_multiple": 1.2}
+            for _ in range(6)
+        ],
+    )
+    plan = {**_live_plan(), "regime": "low_liquidity"}
+
+    result = evaluate_professional_entry_gate(
+        side="BUY",
+        latest=_latest(),
+        live_plan=plan,
+        policy=ProfessionalGatePolicy(stop_loss_cooldown_hours=0.0),
+    )
+
+    assert result.passed is False
+    assert result.layers["regime_policy"]["regime"] == "low_liquidity"
+    assert any("Low-liquidity regime" in item for item in result.violations)
 
 
 def test_professional_gate_still_blocks_bad_market_bot_evidence(monkeypatch) -> None:

@@ -41,10 +41,19 @@ def test_cmd_ai_readiness_scan_compact_summarizes_results(monkeypatch) -> None:
                 "opens_orders": False,
                 "operator_testnet_execute_command": ".venv/bin/binance-quant-control live-pilot --symbol ETHUSDT --execute",
             },
+            "research_candidate_report": {
+                "mode": "research_candidate_report_v1",
+                "candidate_count": 2,
+                "reviewable_candidate_count": 2,
+                "trade_allowed_count": 1,
+                "promotion_boundary": {"mainnet_live_allowed": False},
+            },
             "hard_blocker_taxonomy": {
                 "kill_switch": ["Trading is paused by kill-switch."],
                 "market_state": ["Volume z-score is below floor."],
             },
+            "denial_journal_path": "state/hermes-readiness-scan/readiness-denials.jsonl",
+            "denial_journal_count": 1,
             "scan_results": [
                 {
                     "rank": 1,
@@ -107,7 +116,11 @@ def test_cmd_ai_readiness_scan_compact_summarizes_results(monkeypatch) -> None:
     assert payload["ready_after_global_unlock_count"] == 1  # type: ignore[index]
     assert payload["selected_after_global_unlock"]["symbol"] == "DOGEUSDT"  # type: ignore[index]
     assert payload["execution_ticket"]["symbol"] == "ETHUSDT"  # type: ignore[index]
+    assert payload["research_candidate_report"]["candidate_count"] == 2  # type: ignore[index]
+    assert payload["research_candidate_report"]["promotion_boundary"]["mainnet_live_allowed"] is False  # type: ignore[index]
     assert payload["machine_action_queue"][0]["action"] == "execute_ready_dry_run_only"  # type: ignore[index]
     assert payload["hard_blocker_classes"] == ["kill_switch", "market_state"]  # type: ignore[index]
+    assert payload["denial_journal_count"] == 1  # type: ignore[index]
+    assert payload["denial_journal_path"] == "state/hermes-readiness-scan/readiness-denials.jsonl"  # type: ignore[index]
     assert payload["scan_summary"][0]["blocker_classes"] == ["kill_switch"]  # type: ignore[index]
     assert "live_plan" not in payload["scan_summary"][0]  # type: ignore[index]

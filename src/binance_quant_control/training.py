@@ -246,6 +246,7 @@ def _build_training_iteration(
         latest=analysis_payload.get("latest") or {},
         analysis=analysis_payload.get("analysis") or {},
         trade_plan=analysis_payload.get("trade_plan") or {},
+        side=candidate_side or "BUY",
     )
     live_plan = None
     if candidate_side:

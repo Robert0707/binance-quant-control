@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import binance_quant_control.readiness_scanner as scanner
@@ -18,6 +19,16 @@ def _queue_item(rank: int, symbol: str) -> dict[str, object]:
         "machine_state": "candidate_ready",
         "open_order_gate": {"allowed": True, "blockers": []},
     }
+
+
+def _blocked_queue_item(rank: int, symbol: str) -> dict[str, object]:
+    item = _queue_item(rank, symbol)
+    item["machine_state"] = "route_history_blocked"
+    item["open_order_gate"] = {
+        "allowed": False,
+        "blockers": [f"route-quarantined:{symbol.lower()}-route:profit-factor below floor"],
+    }
+    return item
 
 
 def _plan(
@@ -207,6 +218,127 @@ def test_ai_readiness_scan_classifies_blockers_when_all_candidates_fail(
     assert "market_state" in taxonomy
     assert "exchange_constraints" in taxonomy
     assert "strategy_performance" in taxonomy
+    assert payload["denial_journal_count"] == 1
+    report = payload["research_candidate_report"]
+    assert report["candidate_count"] == 1
+    assert report["reviewable_candidate_count"] == 1
+    assert report["trade_allowed_count"] == 0
+    assert report["side_counts"] == {"BUY": 1}
+    assert report["horizon_counts"] == {"medium": 1}
+    assert report["side_horizon_counts"] == {"buy_medium": 1}
+    assert report["reviewable_side_horizon_counts"] == {"buy_medium": 1}
+    assert report["expectancy_improvement_targets"]["risk_ceiling_pct"] == 0.025
+    assert report["promotion_boundary"]["mainnet_live_allowed"] is False
+    top = report["top_candidates"][0]
+    assert top["symbol"] == "DOGEUSDT"
+    assert top["research_status"] == "reviewable_signal"
+    assert top["horizon"] == "medium"
+    assert top["trade_readiness_allowed"] is False
+    assert top["expectancy_metrics"]["profit_factor"] is None
+    assert "profit_factor_below_1.0_or_missing" in top["positive_expectancy_gap"]
+    assert top["promotion_boundary"] == "research_only_not_trade_permission"
+    journal_path = Path(payload["denial_journal_path"])
+    assert journal_path.exists()
+    row = json.loads(journal_path.read_text(encoding="utf-8").splitlines()[0])
+    assert row["gate"] == "ai_readiness_live_plan_denial"
+    assert row["symbol"] == "DOGEUSDT"
+    assert "Order notional 4.9000 USDT is below exchange minimum 5.0000." in row["blockers"]
+    assert row["metadata"]["next_action"] == "repair_exchange_sizing_or_margin"
+
+
+def test_ai_readiness_scan_max_candidates_limits_live_scans_not_blocked_reporting(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    scanned_symbols: list[str] = []
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [
+                _blocked_queue_item(1, "BTCUSDT"),
+                _queue_item(2, "DOGEUSDT"),
+                _queue_item(3, "ETHUSDT"),
+            ],
+        },
+    )
+    monkeypatch.setattr(scanner, "load_settings", lambda: object())
+    monkeypatch.setattr(scanner, "load_strategy_config", lambda _path: type(
+        "Strategy",
+        (),
+        {
+            "defaults": type(
+                "Defaults",
+                (),
+                {
+                    "market": "futures",
+                    "interval": "4h",
+                    "limit": 600,
+                    "use_blave": False,
+                },
+            )()
+        },
+    )())
+    monkeypatch.setattr(
+        scanner,
+        "run_analysis",
+        lambda _settings, **kwargs: scanned_symbols.append(kwargs["symbol"]) or (
+            {
+                "symbol": kwargs["symbol"],
+                "market": kwargs["market"],
+                "analysis": {"score": 80, "convergence": 0.82},
+                "latest": {"close": 1.0},
+                "trade_plan": {"long": {}, "short": {}},
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "build_live_execution_plan",
+        lambda _settings, _strategy, analysis, **_kwargs: _plan(
+            symbol=analysis["symbol"],
+            allowed=False,
+            violations=["Volume z-score is below floor."],
+        ),
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path, max_candidates=1)
+
+    assert payload["candidate_count"] == 2
+    assert payload["scanned_count"] == 1
+    assert scanned_symbols == ["DOGEUSDT"]
+    assert [item["symbol"] for item in payload["scan_results"]] == ["BTCUSDT", "DOGEUSDT"]
+    assert payload["scan_results"][0]["machine_state"] == "route_history_blocked"
+
+
+def test_ai_readiness_scan_classifies_route_side_text_as_route_history(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    blocked = _queue_item(1, "ETHUSDT")
+    blocked["machine_state"] = "route_history_blocked"
+    blocked["open_order_gate"] = {
+        "allowed": False,
+        "blockers": ["Route-side net PnL is still negative (-0.8314 USDT) for eth-core/BUY."],
+    }
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [blocked],
+        },
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path)
+
+    assert payload["scan_results"][0]["blocker_taxonomy"]["route_history"]
+    assert payload["hard_blocker_taxonomy"]["route_history"]
+    assert payload["machine_action_queue"][0]["action"] == "repair_route_history_or_wait_for_quarantine_clear"
 
 
 def test_ai_readiness_scan_action_queue_keeps_post_kill_switch_work_visible(
@@ -347,6 +479,256 @@ def test_ai_readiness_scan_marks_candidates_ready_after_global_unlock(
     kill_row = payload["machine_action_queue"][0]
     assert kill_row["unlock_ready_candidate_count"] == 1
     assert kill_row["unlock_ready_candidates"] == ["ETHUSDT:BUY"]
+
+
+def test_ai_readiness_scan_reports_blocked_research_candidates_by_side(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    sell_item = _queue_item(1, "ETHUSDT")
+    sell_item["signal"]["side"] = "SELL"  # type: ignore[index]
+    sell_item["signal"]["route_id"] = "eth-core-short"  # type: ignore[index]
+    buy_item = _queue_item(2, "SOLUSDT")
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [sell_item, buy_item],
+        },
+    )
+    monkeypatch.setattr(scanner, "load_settings", lambda: object())
+    monkeypatch.setattr(scanner, "load_strategy_config", lambda _path: type(
+        "Strategy",
+        (),
+        {
+            "defaults": type(
+                "Defaults",
+                (),
+                {
+                    "market": "futures",
+                    "interval": "4h",
+                    "limit": 600,
+                    "use_blave": False,
+                },
+            )()
+        },
+    )())
+    monkeypatch.setattr(
+        scanner,
+        "run_analysis",
+        lambda _settings, **kwargs: (
+            {
+                "symbol": kwargs["symbol"],
+                "market": kwargs["market"],
+                "analysis": {"score": 72, "convergence": 0.9},
+                "latest": {"close": 1.0},
+                "trade_plan": {"long": {}, "short": {}},
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "build_live_execution_plan",
+        lambda _settings, _strategy, analysis, **_kwargs: _plan(
+            symbol=analysis["symbol"],
+            allowed=False,
+            violations=["Recent expectancy is below threshold."],
+        ),
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path)
+
+    assert payload["allowed_count"] == 0
+    report = payload["research_candidate_report"]
+    assert report["candidate_count"] == 2
+    assert report["reviewable_candidate_count"] == 2
+    assert report["trade_allowed_count"] == 0
+    assert report["side_counts"] == {"SELL": 1, "BUY": 1}
+    assert report["reviewable_side_counts"] == {"SELL": 1, "BUY": 1}
+    assert "missing_reviewable_sell_research_candidate" not in report["coverage_gaps"]
+    assert "improve_expectancy_before_promotion" in report["research_next_actions"]
+    assert {item["side"] for item in report["top_candidates"]} == {"BUY", "SELL"}
+    assert all(item["promotion_boundary"] == "research_only_not_trade_permission" for item in report["top_candidates"])
+
+
+def test_ai_readiness_scan_reports_research_candidates_by_horizon(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    short_item = _queue_item(1, "DOGEUSDT")
+    short_item["signal"]["interval"] = "15m"  # type: ignore[index]
+    medium_item = _queue_item(2, "SOLUSDT")
+    medium_item["signal"]["interval"] = "4h"  # type: ignore[index]
+    long_item = _queue_item(3, "BTCUSDT")
+    long_item["signal"]["interval"] = "1d"  # type: ignore[index]
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [short_item, medium_item, long_item],
+        },
+    )
+    monkeypatch.setattr(scanner, "load_settings", lambda: object())
+    monkeypatch.setattr(scanner, "load_strategy_config", lambda _path: type(
+        "Strategy",
+        (),
+        {
+            "defaults": type(
+                "Defaults",
+                (),
+                {
+                    "market": "futures",
+                    "interval": "4h",
+                    "limit": 600,
+                    "use_blave": False,
+                },
+            )()
+        },
+    )())
+    monkeypatch.setattr(
+        scanner,
+        "run_analysis",
+        lambda _settings, **kwargs: (
+            {
+                "symbol": kwargs["symbol"],
+                "market": kwargs["market"],
+                "analysis": {"score": 72, "convergence": 0.9},
+                "latest": {"close": 1.0},
+                "trade_plan": {"long": {}, "short": {}},
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "build_live_execution_plan",
+        lambda _settings, _strategy, analysis, **_kwargs: _plan(
+            symbol=analysis["symbol"],
+            allowed=False,
+            violations=["Recent expectancy is below threshold."],
+        ),
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path)
+
+    report = payload["research_candidate_report"]
+    assert report["horizon_counts"] == {"short": 1, "medium": 1, "long": 1}
+    assert report["reviewable_horizon_counts"] == {"short": 1, "medium": 1, "long": 1}
+    assert not any(gap.endswith("_horizon_candidate") for gap in report["coverage_gaps"])
+    assert "missing_reviewable_sell_short_research_candidate" in report["coverage_gaps"]
+    assert "missing_reviewable_sell_long_research_candidate" in report["coverage_gaps"]
+    assert "missing_reviewable_buy_long_research_candidate" not in report["coverage_gaps"]
+    assert report["expectancy_improvement_targets"] == {
+        "profit_factor_min": 1.0,
+        "expectancy_r_min": 0.0,
+        "sample_count_min": 30,
+        "stop_loss_ratio_max": 0.55,
+        "risk_ceiling_pct": 0.025,
+    }
+    assert {item["horizon"] for item in report["top_candidates"]} == {"short", "medium", "long"}
+
+
+def test_ai_readiness_scan_reports_research_coverage_gaps(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [_queue_item(1, "SOLUSDT")],
+        },
+    )
+    monkeypatch.setattr(scanner, "load_settings", lambda: object())
+    monkeypatch.setattr(scanner, "load_strategy_config", lambda _path: type(
+        "Strategy",
+        (),
+        {
+            "defaults": type(
+                "Defaults",
+                (),
+                {
+                    "market": "futures",
+                    "interval": "4h",
+                    "limit": 600,
+                    "use_blave": False,
+                },
+            )()
+        },
+    )())
+    monkeypatch.setattr(
+        scanner,
+        "run_analysis",
+        lambda _settings, **kwargs: (
+            {
+                "symbol": kwargs["symbol"],
+                "market": kwargs["market"],
+                "analysis": {"score": 72, "convergence": 0.9},
+                "latest": {"close": 1.0},
+                "trade_plan": {"long": {}, "short": {}},
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "build_live_execution_plan",
+        lambda _settings, _strategy, analysis, **_kwargs: _plan(
+            symbol=analysis["symbol"],
+            allowed=False,
+            violations=["Recent expectancy is below threshold."],
+        ),
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path)
+
+    report = payload["research_candidate_report"]
+    assert report["coverage_gaps"] == [
+        "missing_reviewable_sell_research_candidate",
+        "missing_reviewable_short_horizon_candidate",
+        "missing_reviewable_long_horizon_candidate",
+        "missing_reviewable_buy_short_research_candidate",
+        "missing_reviewable_buy_long_research_candidate",
+        "missing_reviewable_sell_short_research_candidate",
+        "missing_reviewable_sell_medium_research_candidate",
+        "missing_reviewable_sell_long_research_candidate",
+        "no_trade_readiness_allowed_candidate",
+    ]
+    assert report["research_next_actions"] == [
+        "expand_short_and_long_interval_research_lanes",
+        "repair_or_expand_short_side_candidate_generation",
+        "improve_expectancy_before_promotion",
+    ]
+    expansion = report["research_expansion_plan"]
+    surfaces = {item["surface"] for item in expansion}
+    assert "sell_medium_research" in surfaces
+    assert "buy_short_research" in surfaces
+    assert "buy_long_research" in surfaces
+    assert all(item["purpose"] == "research_only_candidate_generation" for item in expansion)
+    assert all(item["promotion_boundary"] == "does_not_change_live_readiness_or_mainnet_permission" for item in expansion)
+    assert all("--target-profit-factor 1.0" in item["command"] for item in expansion)
+    assert all(f"--target-side {item['target_side']}" in item["command"] for item in expansion)
+    assert all(f"--target-interval {item['target_interval']}" in item["command"] for item in expansion)
+    assert all("--limit 600" in item["command"] for item in expansion)
+    assert all("--grid-mode fast" in item["command"] for item in expansion)
+    assert all("--min-test-trades 10" in item["command"] for item in expansion)
+    assert all("--max-configs 8" in item["command"] for item in expansion)
+    assert all("--max-walk-forward-validations 1" in item["command"] for item in expansion)
+    assert all("--top-n 5" in item["command"] for item in expansion)
+    assert all("--skip-news" in item["command"] for item in expansion)
+    assert all("--side " not in item["command"] for item in expansion)
+    assert all("--interval " not in item["command"] for item in expansion)
+    assert all(item["smoke_sweep_budget"]["max_configs"] == 8 for item in expansion)
+    assert all(item["smoke_sweep_budget"]["limit"] == 600 for item in expansion)
+    assert {item["target_side"] for item in expansion} == {"BUY", "SELL"}
+    assert {item["target_interval"] for item in expansion} == {"15m", "4h", "1d"}
 
 
 def test_ai_readiness_scan_writes_json_when_plan_contains_infinite_values(

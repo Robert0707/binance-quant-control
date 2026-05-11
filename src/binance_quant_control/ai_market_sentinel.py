@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +19,7 @@ DEFAULT_SENTINEL_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSD
 DEFAULT_STRATEGY_CONFIG = CONFIG_DIR / "strategy-live-pilot.yaml"
 DEFAULT_BLUEPRINT_CONFIG = CONFIG_DIR / "professional-system-blueprint.default.yaml"
 MAX_CONCURRENT_POSITIONS = 4
+TELEGRAM_MAX_MESSAGE_CHARS = 3900
 
 
 def _utc_now() -> datetime:
@@ -230,6 +234,179 @@ def _build_machine_action_queue(
     return sorted(actions, key=lambda item: int(item.get("priority") or 999))
 
 
+def _first_dict(*values: Any) -> dict[str, Any]:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _risk_reward(entry: float, stop: float, target: float) -> float:
+    risk = abs(entry - stop)
+    reward = abs(target - entry)
+    return round(reward / risk, 4) if risk > 0 and reward > 0 else 0.0
+
+
+def _format_price_list(values: list[Any]) -> str:
+    prices = []
+    for value in values:
+        numeric = _float(value)
+        if numeric > 0:
+            prices.append(f"{numeric:g}")
+    return ", ".join(prices) if prices else "n/a"
+
+
+def _reason_lines(
+    *,
+    candidate: dict[str, Any],
+    ticket: dict[str, Any],
+    live_plan: dict[str, Any],
+    trend: dict[str, Any],
+) -> list[str]:
+    risk_snapshot = _first_dict(ticket.get("risk_snapshot"))
+    expectancy = _first_dict(ticket.get("expectancy_evidence"))
+    professional_gate = _first_dict(live_plan.get("professional_entry_gate"))
+    layers = _first_dict(professional_gate.get("layers"))
+    strategy_performance = _first_dict(layers.get("strategy_performance"))
+    sizing = _first_dict(live_plan.get("sizing"))
+    signal_scores = _first_dict(sizing.get("signal_scores"))
+    reasons: list[str] = []
+    if candidate.get("route_id"):
+        reasons.append(f"route={candidate.get('route_id')}")
+    if candidate.get("strategy_family"):
+        reasons.append(f"family={candidate.get('strategy_family')}")
+    score = risk_snapshot.get("analysis_score") or live_plan.get("analysis_score")
+    convergence = risk_snapshot.get("analysis_convergence") or live_plan.get("analysis_convergence")
+    if score is not None:
+        reasons.append(f"analysis_score={score}")
+    if convergence is not None:
+        reasons.append(f"convergence={convergence}")
+    pf = expectancy.get("profit_factor") or strategy_performance.get("profit_factor")
+    expectancy_r = expectancy.get("expectancy_r") or strategy_performance.get("expectancy_r")
+    payoff = expectancy.get("payoff_ratio") or strategy_performance.get("payoff_ratio")
+    if pf is not None:
+        reasons.append(f"PF={pf}")
+    if expectancy_r is not None:
+        reasons.append(f"expectancy_R={expectancy_r}")
+    if payoff is not None:
+        reasons.append(f"payoff={payoff}")
+    if signal_scores.get("composite_quality_score") is not None:
+        reasons.append(f"quality={signal_scores.get('composite_quality_score')}")
+    if trend.get("bias") and trend.get("bias") != "unknown":
+        reasons.append(f"trend={trend.get('bias')} ADX={trend.get('adx')}")
+    return reasons
+
+
+def _build_conditional_order_alert(
+    *,
+    readiness: dict[str, Any],
+    trend_state: dict[str, dict[str, Any]],
+    expansion_gate: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = _first_dict(readiness.get("selected_ready_candidate"))
+    ticket = _first_dict(readiness.get("execution_ticket"))
+    live_plan = _first_dict(candidate.get("live_plan"))
+    if not candidate or not ticket or not live_plan:
+        return {
+            "should_notify": False,
+            "reason": "no-readiness-approved-candidate",
+            "blockers": expansion_gate.get("blockers", []),
+        }
+    symbol = str(candidate.get("symbol") or ticket.get("symbol") or "").upper()
+    side = str(candidate.get("side") or ticket.get("side") or "").upper()
+    trend = trend_state.get(symbol) or {}
+    entry = _float(live_plan.get("price") or (ticket.get("risk_snapshot") or {}).get("price"))
+    stop = _float(live_plan.get("stop_price"))
+    take_profit_prices = [
+        _float(item)
+        for item in (live_plan.get("take_profit_prices") or [])
+        if _float(item) > 0
+    ]
+    first_target = take_profit_prices[0] if take_profit_prices else _float(live_plan.get("take_profit_price"))
+    risk_snapshot = _first_dict(ticket.get("risk_snapshot"))
+    risk_reward = _risk_reward(entry, stop, first_target)
+    planned_risk_pct = _float(
+        live_plan.get("planned_account_risk_pct") or risk_snapshot.get("planned_account_risk_pct")
+    )
+    action = "做多" if side == "BUY" else "做空"
+    alert = {
+        "should_notify": True,
+        "alert_type": "conditional_order_candidate",
+        "symbol": symbol,
+        "action": action,
+        "side": side,
+        "market": ticket.get("market"),
+        "interval": ticket.get("interval"),
+        "entry_type": "conditional_limit_or_stop_entry",
+        "condition_entry_price": entry,
+        "reference_entry_price": entry,
+        "stop_loss_price": stop,
+        "take_profit_prices": take_profit_prices,
+        "take_profit_quantities": live_plan.get("take_profit_quantities") or [],
+        "take_profit_weights": live_plan.get("take_profit_weights") or [],
+        "runner_quantity": live_plan.get("take_profit_runner_quantity"),
+        "max_safe_leverage": live_plan.get("leverage") or risk_snapshot.get("leverage"),
+        "quantity": live_plan.get("quantity"),
+        "margin_notional_usdt": live_plan.get("margin_notional_usdt")
+        or risk_snapshot.get("margin_notional_usdt"),
+        "gross_notional_usdt": live_plan.get("gross_notional_usdt")
+        or risk_snapshot.get("gross_notional_usdt"),
+        "planned_account_risk_pct": round(planned_risk_pct, 6),
+        "risk_reward_to_tp1": risk_reward,
+        "why_enter": _reason_lines(
+            candidate=candidate,
+            ticket=ticket,
+            live_plan=live_plan,
+            trend=trend,
+        ),
+        "preflight_command": ticket.get("preflight_command"),
+        "operator_testnet_execute_command": ticket.get("operator_testnet_execute_command"),
+        "execution_boundary": "notification_only_no_orders_sent",
+    }
+    return alert
+
+
+def format_conditional_order_telegram(alert: dict[str, Any]) -> str:
+    if not alert.get("should_notify"):
+        blockers = ", ".join(str(item) for item in alert.get("blockers") or []) or str(alert.get("reason") or "blocked")
+        return f"AI Trader 條件單掃描：暫無可執行候選\nblockers: {blockers}"
+    reasons = [str(item) for item in alert.get("why_enter") or []]
+    reason_text = "\n".join(f"- {item}" for item in reasons[:8]) if reasons else "- readiness gate passed"
+    lines = [
+        "AI Trader 條件單候選",
+        f"{alert.get('symbol')} {alert.get('action')} ({alert.get('side')}) {alert.get('market')} {alert.get('interval')}",
+        f"條件進場價: {alert.get('condition_entry_price'):g}",
+        f"止損價: {alert.get('stop_loss_price'):g}",
+        f"分批止盈: {_format_price_list(alert.get('take_profit_prices') or [])}",
+        f"最高安全槓桿: {alert.get('max_safe_leverage')}x",
+        f"數量: {alert.get('quantity')} | 保證金: {alert.get('margin_notional_usdt')} USDT | 名目: {alert.get('gross_notional_usdt')} USDT",
+        f"計畫風險: {alert.get('planned_account_risk_pct')} | TP1 R:R: {alert.get('risk_reward_to_tp1')}",
+        "為甚可以入場:",
+        reason_text,
+        "邊界: 只通知，未送出訂單；執行前仍需 readiness / operator execute。",
+    ]
+    return "\n".join(lines)[:TELEGRAM_MAX_MESSAGE_CHARS]
+
+
+def send_telegram_text(text: str) -> dict[str, Any]:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return {"sent": False, "reason": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing"}
+    encoded_token = urllib.parse.quote(token, safe="")
+    url = f"https://api.telegram.org/bot{encoded_token}/sendMessage"
+    body = json.dumps({"chat_id": chat_id, "text": text}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        raw = response.read().decode("utf-8")
+    return {"sent": True, "response": json.loads(raw) if raw else {}}
+
+
 def run_ai_market_sentinel(
     *,
     symbols: list[str] | tuple[str, ...] | None = None,
@@ -240,6 +417,8 @@ def run_ai_market_sentinel(
     blueprint_config: str | Path = DEFAULT_BLUEPRINT_CONFIG,
     output_dir: str | Path | None = None,
     skip_readiness: bool = False,
+    send_telegram: bool = False,
+    max_readiness_candidates: int = 0,
 ) -> dict[str, Any]:
     symbol_list = tuple(str(item).upper() for item in (symbols or DEFAULT_SENTINEL_SYMBOLS) if str(item).strip())
     settings = load_settings()
@@ -284,6 +463,7 @@ def run_ai_market_sentinel(
             limit=0,
             margin_notional_usdt=None,
             execution_mode="testnet_exploration",
+            max_candidates=max_readiness_candidates,
         )
     position_overlays = _position_risk_overlay(positions, trend_state)
     expansion_gate = _build_expansion_gate(
@@ -297,6 +477,24 @@ def run_ai_market_sentinel(
         expansion_gate=expansion_gate,
         readiness=readiness,
         position_overlays=position_overlays,
+    )
+    conditional_alert = _build_conditional_order_alert(
+        readiness=readiness,
+        trend_state=trend_state,
+        expansion_gate=expansion_gate,
+    )
+    telegram_text = format_conditional_order_telegram(conditional_alert)
+    telegram_status = (
+        send_telegram_text(telegram_text)
+        if send_telegram and conditional_alert.get("should_notify")
+        else {
+            "sent": False,
+            "reason": (
+                "send_telegram disabled"
+                if not send_telegram
+                else "no readiness-approved conditional order candidate"
+            ),
+        }
     )
     payload: dict[str, Any] = {
         "generated_at": generated_at,
@@ -328,16 +526,20 @@ def run_ai_market_sentinel(
             "selected_ready_candidate": readiness.get("selected_ready_candidate"),
             "next_machine_action": readiness.get("next_machine_action"),
             "hard_blocker_taxonomy": readiness.get("hard_blocker_taxonomy"),
+            "denial_journal_path": readiness.get("denial_journal_path"),
+            "denial_journal_count": readiness.get("denial_journal_count"),
             "report_path": readiness.get("report_path"),
         },
         "expansion_gate": expansion_gate,
+        "conditional_order_alert": conditional_alert,
+        "telegram_text": telegram_text,
+        "telegram": telegram_status,
         "machine_action_queue": action_queue,
         "errors": errors,
     }
     report_dir = Path(output_dir).expanduser().resolve() if output_dir else STATE_DIR / "ai-market-sentinel"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{_stamp()}-ai-market-sentinel.json"
-    report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     payload["report_path"] = str(report_path)
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return payload

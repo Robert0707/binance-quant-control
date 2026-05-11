@@ -86,6 +86,40 @@ intents:
       - config/autonomous-simulation-lane.default.yaml
       - docs/workflows/human-intent-to-robot-actions.md
 
+  - id: new-symbol-trade-pipeline
+    phrases:
+      - 新幣到交易
+      - 從新幣到交易
+      - 新幣審核
+      - 任意幣丟進去
+      - 流水線
+      - 客戶交付
+      - 完美嵌入hermes
+      - 完美欠入hermes
+    summary: Route a new symbol through the full evidence-first trade pipeline.
+    operator_prompt: >
+      Treat the requested symbol as a candidate, not as a trade. Run the
+      evidence-first pipeline from symbol routing, feature dataset, expectancy
+      research, risk-combo matrix, Hermes AI Trader gate, AI readiness scan,
+      decision contract, decision audit, and operator dashboard. Keep mainnet
+      disabled, keep HOLD legal, and optimize only the layer that blocks.
+    actions:
+      - route-symbol
+      - feature-dataset
+      - alpha-research
+      - risk-combo-sweep
+      - risk-combo-matrix
+      - hermes-ai-trader
+      - ai-readiness-scan
+      - trade-decision
+      - decision-audit
+      - operator-dashboard
+    resources:
+      - docs/workflows/new-symbol-to-trade-pipeline.md
+      - docs/workflows/market-bot-expectancy-research-pipeline.md
+      - docs/workflows/hermes-ai-trader-v2-workflow.md
+      - docs/workflows/strategy-convergence-validation.md
+
   - id: hermes-start-continuous-testnet-trading
     phrases:
       - 開始交易

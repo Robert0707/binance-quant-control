@@ -28,6 +28,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=160)
     parser.add_argument("--market", choices=("spot", "futures"), default="futures")
     parser.add_argument("--skip-readiness", action="store_true")
+    parser.add_argument("--send-telegram", action="store_true")
+    parser.add_argument("--max-readiness-candidates", type=int, default=6)
     parser.add_argument("--compact", action="store_true")
     args = parser.parse_args()
 
@@ -37,12 +39,16 @@ def main() -> None:
         limit=args.limit,
         market=args.market,
         skip_readiness=bool(args.skip_readiness),
+        send_telegram=bool(args.send_telegram),
+        max_readiness_candidates=args.max_readiness_candidates,
     )
     if args.compact:
         payload = {
             "mode": payload.get("mode"),
             "position_state": payload.get("position_state"),
             "expansion_gate": payload.get("expansion_gate"),
+            "conditional_order_alert": payload.get("conditional_order_alert"),
+            "telegram": payload.get("telegram"),
             "machine_action_queue": payload.get("machine_action_queue"),
             "errors": payload.get("errors"),
             "report_path": payload.get("report_path"),
