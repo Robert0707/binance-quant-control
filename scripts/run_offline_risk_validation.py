@@ -34,6 +34,33 @@ def _is_running(pid: int) -> bool:
     return pid > 0 and Path(f"/proc/{pid}").exists()
 
 
+def _child_processes(pid: int) -> list[dict[str, str]]:
+    if pid <= 0:
+        return []
+    completed = subprocess.run(
+        ["ps", "--ppid", str(pid), "-o", "pid=,stat=,etime=,pcpu=,pmem=,cmd="],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    children: list[dict[str, str]] = []
+    for line in (completed.stdout or "").splitlines():
+        parts = line.strip().split(None, 5)
+        if len(parts) < 6:
+            continue
+        children.append(
+            {
+                "pid": parts[0],
+                "stat": parts[1],
+                "elapsed": parts[2],
+                "pcpu": parts[3],
+                "pmem": parts[4],
+                "cmd": parts[5],
+            }
+        )
+    return children
+
+
 def _latest_run() -> Path | None:
     if not STATE_DIR.exists():
         return None
@@ -211,6 +238,7 @@ def status(_args: argparse.Namespace) -> int:
         "summary_exists": summary_path.exists(),
         "summary": None,
         "progress": None,
+        "child_processes": _child_processes(pid),
         "log_tail": "",
     }
     progress_path = run_dir / "progress.json"
