@@ -110,6 +110,19 @@ Hermes trade cycle dry run:
 openclaw-quantctl hermes-trade cycle --force --dry-run-only --compact
 ```
 
+Local trading GUI:
+
+```bash
+openclaw-quantctl trade-console --host 127.0.0.1 --port 8765 --allow-order-actions --compact
+```
+
+Open `http://127.0.0.1:8765/` on the same machine. The console shows current
+positions, protective order coverage, candidate/gate status, session state, and
+closed-trade PnL curve. It can start/stop the local trading session, run one
+Hermes cycle, and submit explicit confirm-gated reduce-only position closes.
+Entry orders still go through the existing readiness, Hailo, session, and
+Binance write gates; the GUI does not enable mainnet.
+
 Closed-trade review and strategy feedback:
 
 ```bash
