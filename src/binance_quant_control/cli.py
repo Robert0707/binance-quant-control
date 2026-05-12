@@ -103,6 +103,7 @@ from .route_risk_control import (
 from .signal_scoring import build_signal_scores
 from .strategy import load_strategy_config
 from .supervision import build_supervisor_policy, run_delivery_supervisor
+from .trade_console import TradeConsoleConfig, run_trade_console_server
 from .trade_session import start_trade_session, stop_trade_session, trade_session_status
 from .trading_control import (
     AutoPausePolicy,
@@ -2385,6 +2386,35 @@ def cmd_trade_session(args: argparse.Namespace) -> None:
     print_json(payload)
 
 
+def cmd_trade_console(args: argparse.Namespace) -> None:
+    config = TradeConsoleConfig(
+        host=args.host,
+        port=int(args.port),
+        allow_order_actions=bool(args.allow_order_actions),
+    )
+    server = run_trade_console_server(config)
+    url = f"http://{config.host}:{config.port}/"
+    if getattr(args, "compact", False):
+        print_json(
+            {
+                "status": "serving",
+                "url": url,
+                "allow_order_actions": config.allow_order_actions,
+                "mainnet_live_allowed": False,
+            },
+            compact=True,
+        )
+    else:
+        print(f"Trade console serving at {url}")
+        print("Press Ctrl+C to stop.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 def cmd_feature_dataset(args: argparse.Namespace) -> None:
     settings = load_settings()
     payload = build_feature_dataset(
@@ -3257,6 +3287,20 @@ def build_parser() -> argparse.ArgumentParser:
     trade_session.add_argument("--reason", default="")
     trade_session.add_argument("--compact", action="store_true", help="Minimal output for AI agents")
     trade_session.set_defaults(func=cmd_trade_session)
+
+    trade_console = sub.add_parser(
+        "trade-console",
+        help="Serve a local web GUI for trading status, controls, candidates, and PnL",
+    )
+    trade_console.add_argument("--host", default="127.0.0.1")
+    trade_console.add_argument("--port", type=int, default=8765)
+    trade_console.add_argument(
+        "--allow-order-actions",
+        action="store_true",
+        help="Allow GUI reduce-only close-position actions; entry actions still use existing gates",
+    )
+    trade_console.add_argument("--compact", action="store_true", help="Print machine-readable startup info")
+    trade_console.set_defaults(func=cmd_trade_console)
 
     feature_dataset = sub.add_parser(
         "feature-dataset",
