@@ -688,13 +688,13 @@ def run_hermes_trade_cycle(
         summary["steps"]["external_context"] = external_context
         if external_context.get("returncode") == 0:
             state = replace(state, last_external_context_at=_utc_now_iso())
+    hailo_triage: dict[str, Any] | None = None
     if config.run_hailo_triage_before_cycle and _interval_due(
         state.last_hailo_triage_at,
         minutes=config.hailo_triage_min_interval_minutes,
     ):
         hailo_triage = _run_hailo_triage(config)
         summary["steps"]["hailo_triage"] = hailo_triage
-        summary["hailo_entry_gate"] = evaluate_hailo_entry_gate(hailo_triage)
         if hailo_triage.get("returncode") == 0:
             state = replace(state, last_hailo_triage_at=_utc_now_iso())
     optimizer_due = _optimizer_due(config, state)
@@ -746,6 +746,12 @@ def run_hermes_trade_cycle(
             "report_path": readiness.get("report_path"),
         }
         ticket = readiness.get("execution_ticket") if isinstance(readiness.get("execution_ticket"), dict) else None
+    if hailo_triage is not None:
+        summary["hailo_entry_gate"] = evaluate_hailo_entry_gate(
+            hailo_triage,
+            execution_mode=config.execution_mode,
+            candidate=summary.get("readiness", {}).get("selected_ready_candidate"),
+        )
     allowed_to_execute, execution_blockers = _safe_execution_allowed(
         config=config,
         state=state,
