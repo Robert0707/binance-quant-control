@@ -814,6 +814,105 @@ def test_ai_readiness_scan_prioritizes_risk_combo_candidate_under_scan_cap(
     assert payload["scan_results"][0]["interval"] == "1d"
 
 
+def test_ai_readiness_scan_tracks_emerging_risk_combo_lead_without_promoting(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    matrix_dir = tmp_path / "risk-combo-matrix"
+    matrix_dir.mkdir(exist_ok=True)
+    matrix_path = matrix_dir / "20260511T010203Z-risk-combo-matrix.json"
+    matrix_path.write_text(
+        json.dumps(
+            {
+                "mode": "risk_combo_side_interval_matrix_v1",
+                "horizon_summary": {
+                    "short": {
+                        "best_emerging_surface": {
+                            "surface": "buy_30m",
+                            "symbol": "WIFUSDT",
+                            "target_side": "BUY",
+                            "target_interval": "30m",
+                            "route_id": "meme-high-beta",
+                            "research_status": "emerging_positive_research_lead",
+                            "promotion_eligible": False,
+                            "research_lead_only": True,
+                            "source_report_path": "state/risk-combo-sweeps/wif-buy-30m.json",
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scanner, "RISK_COMBO_MATRIX_DIR", matrix_dir)
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [],
+        },
+    )
+    monkeypatch.setattr(scanner, "load_settings", lambda: object())
+    monkeypatch.setattr(scanner, "load_strategy_config", lambda _path: type(
+        "Strategy",
+        (),
+        {
+            "defaults": type(
+                "Defaults",
+                (),
+                {
+                    "market": "futures",
+                    "interval": "4h",
+                    "limit": 600,
+                    "use_blave": False,
+                },
+            )()
+        },
+    )())
+    monkeypatch.setattr(
+        scanner,
+        "run_analysis",
+        lambda _settings, **kwargs: (
+            {
+                "symbol": kwargs["symbol"],
+                "market": kwargs["market"],
+                "analysis": {"score": 76, "convergence": 0.88},
+                "latest": {"close": 1.0},
+                "trade_plan": {"long": {}, "short": {}},
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "build_live_execution_plan",
+        lambda _settings, _strategy, analysis, **_kwargs: _plan(
+            symbol=analysis["symbol"],
+            allowed=False,
+            violations=["Sample count is below readiness floor."],
+        ),
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path)
+
+    assert payload["candidate_count"] == 1
+    assert payload["risk_combo_matrix_candidate_count"] == 1
+    assert payload["risk_combo_matrix_report"] == str(matrix_path)
+    result = payload["scan_results"][0]
+    assert result["symbol"] == "WIFUSDT"
+    assert result["interval"] == "30m"
+    assert result["scanned"] is True
+    assert result["allowed"] is False
+    assert result["live_plan"]["violations"] == ["Sample count is below readiness floor."]
+    report = payload["research_candidate_report"]
+    assert report["reviewable_horizon_counts"] == {"short": 1}
+    assert report["top_candidates"][0]["symbol"] == "WIFUSDT"
+    assert report["top_candidates"][0]["trade_readiness_allowed"] is False
+    assert payload["execution_ticket"] is None
+
+
 def test_research_candidate_report_marks_market_only_near_ready_candidate() -> None:
     result = scanner.CandidateScanResult(
         rank=500,

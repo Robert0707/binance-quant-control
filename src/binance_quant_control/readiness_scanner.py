@@ -67,6 +67,7 @@ RESEARCH_SMOKE_SWEEP = {
     "top_n": 5,
 }
 RISK_COMBO_READINESS_STATUSES = {
+    "emerging_positive_research_lead",
     "promising_but_under_validated",
     "robust_research_candidate_found",
 }
@@ -154,6 +155,8 @@ def _risk_combo_surface_to_queue_item(
             "route_id": route_id,
             "source": "risk_combo_matrix",
             "risk_combo_research_status": status,
+            "risk_combo_research_lead_only": bool(surface.get("research_lead_only")),
+            "risk_combo_promotion_eligible": bool(surface.get("promotion_eligible")),
             "risk_combo_source_report_path": surface.get("source_report_path"),
             "risk_combo_matrix_path": matrix_path,
         },
