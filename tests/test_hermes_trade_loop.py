@@ -339,7 +339,9 @@ def test_hermes_trade_cycle_scans_new_symbol_with_open_positions_below_cap(
     payload = loop.run_hermes_trade_cycle(config_path="config/hermes-trade-loop.default.yaml")
 
     assert readiness_calls
+    assert readiness_calls[0]["exclude_symbols"] == ["BTCUSDT"]
     assert payload["position_loop"]["mode"] == "manage_and_seek_new_entry"
+    assert payload["readiness"]["excluded_symbols"] is None
     assert payload["execution_gate"]["allowed"] is True
     assert "open-position-management-priority" not in payload["execution_gate"]["blockers"]
     assert payload["status"] == "testnet_executed"

@@ -262,3 +262,119 @@ def test_risk_combo_live_gate_requires_interval_match(monkeypatch, tmp_path) -> 
     assert result["allowed"] is False
     assert result["matched_surface"] is None
     assert any("no matching robust surface" in item for item in result["reasons"])
+
+
+def test_risk_combo_live_gate_allows_positive_small_sample_for_testnet_exploration(
+    monkeypatch, tmp_path
+) -> None:
+    matrix_dir = tmp_path / "risk-combo-matrix"
+    matrix_dir.mkdir(parents=True)
+    report = matrix_dir / "20260511T010203Z-risk-combo-matrix.json"
+    report.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                "safety": {"opens_orders": False, "writes_execution_config": False, "mainnet_live_allowed": False},
+                "surfaces": [
+                    {
+                        "surface": "buy_30m",
+                        "symbol": "WIFUSDT",
+                        "route_id": "meme-high-beta",
+                        "target_side": "BUY",
+                        "target_interval": "30m",
+                        "promotion_eligible": False,
+                        "recovery_gate_passed": False,
+                        "robust_recovery_gate_passed": False,
+                        "research_lead_only": True,
+                        "full": {
+                            "trade_count": 20,
+                            "profit_factor": 1.94,
+                            "expectancy_r": 0.4,
+                            "stop_loss_ratio": 37.5,
+                        },
+                        "test": {
+                            "trade_count": 3,
+                            "profit_factor": 2.09,
+                            "expectancy_r": 0.39,
+                        },
+                        "walk_forward": {
+                            "window_count": 0,
+                            "positive_expectancy_window_count": 0,
+                            "min_profit_factor": 0.0,
+                            "min_expectancy_r": 0.0,
+                        },
+                        "source_report_path": "state/risk-combo-sweeps/wif.json",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(optimizer, "RISK_COMBO_MATRIX_DIR", matrix_dir)
+
+    normal = optimizer.evaluate_risk_combo_live_gate(
+        symbol="WIFUSDT",
+        route_id="meme-high-beta",
+        side="BUY",
+        interval="30m",
+    )
+    exploratory = optimizer.evaluate_risk_combo_live_gate(
+        symbol="WIFUSDT",
+        route_id="meme-high-beta",
+        side="BUY",
+        interval="30m",
+        execution_mode="testnet_exploration",
+    )
+
+    assert normal["allowed"] is False
+    assert normal["exploration_allowed"] is False
+    assert any("not promotion eligible" in item for item in normal["reasons"])
+    assert exploratory["allowed"] is True
+    assert exploratory["exploration_allowed"] is True
+    assert exploratory["reasons"] == []
+    assert exploratory["strict_reasons"]
+    assert exploratory["promotion_required_for_mainnet"] is True
+
+
+def test_risk_combo_testnet_exploration_still_blocks_negative_expectancy_lead(
+    monkeypatch, tmp_path
+) -> None:
+    matrix_dir = tmp_path / "risk-combo-matrix"
+    matrix_dir.mkdir(parents=True)
+    report = matrix_dir / "20260511T010203Z-risk-combo-matrix.json"
+    report.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                "safety": {"opens_orders": False, "writes_execution_config": False, "mainnet_live_allowed": False},
+                "surfaces": [
+                    {
+                        "symbol": "DOGEUSDT",
+                        "route_id": "meme-high-beta",
+                        "target_side": "BUY",
+                        "target_interval": "30m",
+                        "promotion_eligible": False,
+                        "recovery_gate_passed": False,
+                        "robust_recovery_gate_passed": False,
+                        "full": {"trade_count": 20, "profit_factor": 0.8, "expectancy_r": -0.1, "stop_loss_ratio": 50.0},
+                        "test": {"trade_count": 4, "profit_factor": 1.1, "expectancy_r": 0.05},
+                        "walk_forward": {},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(optimizer, "RISK_COMBO_MATRIX_DIR", matrix_dir)
+
+    result = optimizer.evaluate_risk_combo_live_gate(
+        symbol="DOGEUSDT",
+        route_id="meme-high-beta",
+        side="BUY",
+        interval="30m",
+        execution_mode="testnet_exploration",
+    )
+
+    assert result["allowed"] is False
+    assert result["exploration_allowed"] is False
+    assert any("expectancy" in item for item in result["exploration_reasons"])

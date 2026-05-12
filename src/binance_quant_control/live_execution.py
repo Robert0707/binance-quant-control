@@ -207,6 +207,7 @@ def _soften_exploration_violations(
     warnings: list[str],
     *,
     execution_mode: str,
+    research_promoted: bool = False,
 ) -> list[str]:
     if execution_mode != "testnet_exploration":
         return violations
@@ -223,10 +224,18 @@ def _soften_exploration_violations(
         "adx",
         "trend threshold",
     )
+    research_soft_markers = (
+        "volume z-score",
+        "lacks accumulation confirmation",
+        "lacks distribution confirmation",
+        "multi-timeframe trend is not strong enough",
+    )
     hard: list[str] = []
     for item in violations:
         lowered = item.lower()
-        if any(marker in lowered for marker in soft_markers):
+        if any(marker in lowered for marker in soft_markers) or (
+            research_promoted and any(marker in lowered for marker in research_soft_markers)
+        ):
             warnings.append(f"Testnet exploration override: {item}")
         else:
             hard.append(item)
@@ -464,6 +473,7 @@ def build_live_execution_plan(
         route_id=route.route_id,
         side=side,
         interval=analysis_interval,
+        execution_mode=execution_mode,
     )
     route_mode_reason = ""
     market_bot_promoted = bool(market_bot_gate.get("allowed"))
@@ -487,9 +497,15 @@ def build_live_execution_plan(
                 f"Market-bot gate promotes {symbol}/{route.route_id}; paper route flag does not block testnet readiness."
             )
         if risk_combo_promoted:
-            warnings.append(
-                f"Risk-combo matrix promotes {symbol}/{side}/{analysis_interval}; paper route flag does not block testnet readiness."
-            )
+            if risk_combo_gate.get("exploration_allowed"):
+                warnings.append(
+                    f"Risk-combo matrix allows exploratory testnet harvesting for {symbol}/{side}/{analysis_interval}; "
+                    "this is not a mainnet promotion."
+                )
+            else:
+                warnings.append(
+                    f"Risk-combo matrix promotes {symbol}/{side}/{analysis_interval}; paper route flag does not block testnet readiness."
+                )
     route_quarantine = route_quarantine_status(route.route_id)
     if route_quarantine["quarantined"]:
         reasons = "; ".join(route_quarantine["reasons"]) or "route performance quarantine"
@@ -970,6 +986,7 @@ def build_live_execution_plan(
         violations,
         warnings,
         execution_mode=execution_mode,
+        research_promoted=research_promoted,
     )
     decision_trace.append(
         trace_step(

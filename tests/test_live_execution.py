@@ -1443,7 +1443,7 @@ def test_testnet_exploration_uses_risk_combo_gate_as_promotion_bridge(monkeypatc
     )
     monkeypatch.setattr(
         "binance_quant_control.live_execution.evaluate_risk_combo_live_gate",
-        lambda symbol, route_id, side, interval: {
+        lambda symbol, route_id, side, interval, execution_mode="": {
             "allowed": True,
             "report_path": "state/risk-combo-matrix.json",
             "reasons": [],
@@ -1513,6 +1513,113 @@ def test_testnet_exploration_uses_risk_combo_gate_as_promotion_bridge(monkeypatc
     assert by_layer["professional_entry_gate"]["data"]["layers"]["strategy_performance"]["scope"] == "risk_combo_matrix"
     assert not any("unknown/paper-only routes" in item for item in plan.violations)
     assert any("Risk-combo matrix promotes TRXUSDT/BUY/1d" in item for item in plan.warnings)
+
+
+def test_testnet_exploration_softens_market_state_only_with_research_evidence(monkeypatch):
+    strategy = load_strategy_config(Path("config/strategy-stable-risk.yaml"))
+
+    class FakeSettings:
+        live_trading_enabled = False
+        use_testnet = True
+        testnet_trading_enabled = True
+
+    analysis_payload = {
+        "symbol": "TRXUSDT",
+        "market": "futures",
+        "interval": "1d",
+        "analysis": {
+            "score": 90,
+            "bias": "long-bias",
+            "convergence": 0.9,
+            "regime": "trend",
+            "selected_strategy_family": {"family": "trend_continuation"},
+        },
+        "latest": {
+            "close": 1.416,
+            "adx": 28.0,
+            "realized_vol_20": 0.8,
+            "volume_zscore_20": -2.1,
+            "obv_zscore_20": -1.4,
+            "bb_bandwidth": 0.08,
+            "multi_timeframe_structure": {"bias": "long", "alignment": "mixed", "confidence": 0.2},
+        },
+        "trade_plan": {
+            "long": {
+                "invalidation": 1.36,
+                "take_profit_1": 1.49,
+                "take_profit_2": 1.55,
+                "take_profit_3": 1.62,
+            },
+            "short": {"invalidation": 1.45, "take_profit_1": 1.37},
+        },
+    }
+
+    _allow_historical_signal_risk(monkeypatch)
+    monkeypatch.setattr("binance_quant_control.live_execution.BinanceClient", FakeClient)
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.route_quarantine_status",
+        lambda route_id: {"route_id": route_id, "quarantined": False, "reasons": []},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_optimizer_live_gate",
+        lambda: {"allowed": True, "reasons": [], "promotion_decision": "promote"},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_market_bot_live_gate",
+        lambda symbol, route_id: {"allowed": False, "reasons": [], "matched_row": None},
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_risk_combo_live_gate",
+        lambda symbol, route_id, side, interval, execution_mode="": {
+            "allowed": False,
+            "reasons": ["Risk-combo surface is not promotion eligible."],
+            "matched_surface": None,
+        },
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.evaluate_route_side_risk",
+        lambda route_id, side: type(
+            "SideRisk",
+            (),
+            {
+                "allowed": True,
+                "reasons": [],
+                "to_dict": lambda self: {"allowed": True, "route_id": route_id, "side": side, "reasons": []},
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.record_balance_snapshot",
+        lambda payload, market, note="", scope=None: (
+            type(
+                "Snapshot",
+                (),
+                {
+                    "wallet_balance_usdt": 5000.0,
+                    "available_balance_usdt": 5000.0,
+                    "unrealized_pnl_usdt": 0.0,
+                    "equity_usdt": 5000.0,
+                },
+            )(),
+            ChallengeState(),
+        ),
+    )
+    monkeypatch.setattr(
+        "binance_quant_control.live_execution.load_trading_control_state",
+        lambda: TradingControlState(paused=False, reason="", updated_at="", updated_by="test"),
+    )
+
+    plan = build_live_execution_plan(
+        FakeSettings(),
+        strategy,
+        analysis_payload,
+        margin_notional_usdt=6.0,
+        execution_mode="testnet_exploration",
+    )
+
+    assert plan.allowed is False
+    assert any("Volume z-score" in item for item in plan.violations)
+    assert not any("Testnet exploration override: Volume z-score" in item for item in plan.warnings)
 
 
 def test_build_live_execution_plan_blocks_weak_route_side_history(monkeypatch):

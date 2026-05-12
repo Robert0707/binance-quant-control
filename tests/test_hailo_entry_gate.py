@@ -77,6 +77,29 @@ def test_hailo_entry_gate_vetoes_event_risk_and_critical_errors() -> None:
     assert "hailo-veto:priority_critical" in gate["blockers"]
 
 
+def test_hailo_entry_gate_treats_weak_win_rate_as_advisory_for_expectancy_lanes() -> None:
+    payload = {
+        "returncode": 0,
+        "response": {
+            "events": [
+                {
+                    "source": "quant_runtime",
+                    "event_type": "strategy_review",
+                    "priority": "high",
+                    "labels": ["optimizer_status_ok", "weak_win_rate", "hailo_event_classifier"],
+                }
+            ],
+        },
+    }
+
+    gate = evaluate_hailo_entry_gate(payload)
+
+    assert gate["allowed"] is True
+    assert gate["blockers"] == []
+    assert gate["advisories"] == ["hailo-advisory:weak_win_rate"]
+    assert gate["advisory_events"]
+
+
 def test_hailo_entry_gate_is_observability_only_when_no_output_events() -> None:
     payload = {
         "returncode": 0,

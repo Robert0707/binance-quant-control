@@ -178,6 +178,7 @@ def evaluate_risk_combo_live_gate(
     side: str = "",
     interval: str = "",
     max_report_age_hours: float = 24.0,
+    execution_mode: str = "",
 ) -> dict[str, Any]:
     report = latest_risk_combo_matrix_report()
     if report is None:
@@ -237,6 +238,9 @@ def evaluate_risk_combo_live_gate(
             ),
             None,
         )
+    exploration_mode = execution_mode == "testnet_exploration"
+    exploration_allowed = False
+    exploration_reasons: list[str] = []
     if matched is None:
         reasons.append(f"Risk-combo matrix has no matching robust surface for {normalized_symbol}.")
     else:
@@ -274,15 +278,32 @@ def evaluate_risk_combo_live_gate(
             reasons.append("Risk-combo walk-forward minimum PF/expectancy is below target.")
         if walk_forward and not matched.get("source_report_path"):
             reasons.append("Risk-combo surface has no source sweep report path.")
+        if exploration_mode:
+            exploration_checks = [
+                (full_trades >= 8, f"exploration full sample has only {full_trades:.0f} trades; minimum is 8."),
+                (test_trades >= 3, f"exploration test sample has only {test_trades:.0f} trades; minimum is 3."),
+                (full_pf >= 1.0 and test_pf >= 1.0, "exploration full/test profit factor is below 1.0."),
+                (
+                    full_expectancy > 0.0 and test_expectancy >= 0.0,
+                    "exploration full/test expectancy is not positive.",
+                ),
+                (stop_loss_ratio <= 55.0, f"exploration stop-loss ratio {stop_loss_ratio:.2f}% exceeds 55.00%."),
+            ]
+            exploration_reasons = [reason for passed, reason in exploration_checks if not passed]
+            exploration_allowed = not exploration_reasons
 
     return {
-        "allowed": not reasons,
+        "allowed": not reasons or exploration_allowed,
         "source": "risk_combo_matrix",
         "report_path": report.get("report_path"),
         "report_age_hours": round(age_hours, 4) if age_hours is not None else None,
         "robust_surface_count": int(report.get("robust_surface_count") or 0),
         "promising_surface_count": int(report.get("promising_surface_count") or 0),
-        "reasons": reasons,
+        "reasons": [] if exploration_allowed and reasons else reasons,
+        "strict_reasons": reasons,
+        "exploration_allowed": exploration_allowed,
+        "exploration_reasons": exploration_reasons,
+        "promotion_required_for_mainnet": True,
         "matched_surface": matched,
     }
 

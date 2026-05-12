@@ -160,6 +160,57 @@ def test_ai_readiness_scan_selects_second_candidate_when_first_is_blocked(
     assert Path(payload["report_path"]).exists()
 
 
+def test_ai_readiness_scan_excludes_open_position_symbols(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(scanner, "ensure_runtime_dirs", lambda: None)
+    monkeypatch.setattr(
+        scanner,
+        "run_hermes_ai_trader",
+        lambda **_kwargs: {
+            "report_path": str(tmp_path / "hermes.json"),
+            "candidate_queue": [_queue_item(1, "TRXUSDT"), _queue_item(2, "WIFUSDT")],
+        },
+    )
+    monkeypatch.setattr(scanner, "load_settings", lambda: object())
+    monkeypatch.setattr(scanner, "load_strategy_config", lambda _path: type(
+        "Strategy",
+        (),
+        {
+            "defaults": type(
+                "Defaults",
+                (),
+                {"market": "futures", "interval": "4h", "limit": 600, "use_blave": False},
+            )()
+        },
+    )())
+    monkeypatch.setattr(
+        scanner,
+        "run_analysis",
+        lambda _settings, **kwargs: (
+            {
+                "symbol": kwargs["symbol"],
+                "market": kwargs["market"],
+                "analysis": {"score": 80, "convergence": 0.82},
+                "latest": {"close": 1.0},
+                "trade_plan": {"long": {}, "short": {}},
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        scanner,
+        "build_live_execution_plan",
+        lambda _settings, _strategy, analysis, **_kwargs: _plan(symbol=analysis["symbol"], allowed=True),
+    )
+
+    payload = scanner.run_ai_readiness_scan(output_dir=tmp_path, exclude_symbols=["TRXUSDT"])
+
+    assert payload["excluded_symbols"] == ["TRXUSDT"]
+    assert payload["candidate_count"] == 1
+    assert payload["selected_ready_candidate"]["symbol"] == "WIFUSDT"
+    assert payload["execution_ticket"]["symbol"] == "WIFUSDT"
+    assert all(item["symbol"] != "TRXUSDT" for item in payload["scan_results"])
+
+
 def test_ai_readiness_scan_classifies_blockers_when_all_candidates_fail(
     monkeypatch, tmp_path
 ) -> None:

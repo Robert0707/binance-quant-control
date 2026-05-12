@@ -729,9 +729,15 @@ def run_hermes_trade_cycle(
             limit=config.limit,
             margin_notional_usdt=config.margin_notional_usdt,
             execution_mode=config.execution_mode,
+            exclude_symbols=[
+                str(position.get("symbol") or "").upper()
+                for position in positions_before_rows
+                if str(position.get("symbol") or "").strip()
+            ],
         )
         summary["readiness"] = {
             "candidate_count": readiness.get("candidate_count"),
+            "excluded_symbols": readiness.get("excluded_symbols"),
             "allowed_count": readiness.get("allowed_count"),
             "selected_ready_candidate": readiness.get("selected_ready_candidate"),
             "next_machine_action": readiness.get("next_machine_action"),

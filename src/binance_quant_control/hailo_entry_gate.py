@@ -12,9 +12,11 @@ HAILO_VETO_LABELS = {
     "loss_trade",
     "high_leverage",
     "low_convergence",
-    "weak_win_rate",
     "high_event_risk",
     "needs_root_cause_review",
+}
+HAILO_ADVISORY_LABELS = {
+    "weak_win_rate",
 }
 
 
@@ -50,28 +52,40 @@ def evaluate_hailo_entry_gate(payload: dict[str, Any] | None) -> dict[str, Any]:
     response = _response_from_payload(payload)
     events = _events_from_response(response)
     blockers: list[str] = []
+    advisories: list[str] = []
     veto_events: list[dict[str, Any]] = []
+    advisory_events: list[dict[str, Any]] = []
     for event in events:
         labels = [str(item) for item in (event.get("labels") or [])]
         priority = str(event.get("priority") or "low").lower()
         event_type = str(event.get("event_type") or "")
         matched = [label for label in labels if label in HAILO_VETO_LABELS]
+        advisory = [label for label in labels if label in HAILO_ADVISORY_LABELS]
         if priority == "critical" or event_type == "system_error":
             matched.append(f"priority_{priority}")
-        if not matched:
+        if not matched and not advisory:
             continue
-        veto_events.append(event)
+        if matched:
+            veto_events.append(event)
         for label in matched:
             blocker = f"hailo-veto:{label}"
             if blocker not in blockers:
                 blockers.append(blocker)
+        if advisory:
+            advisory_events.append(event)
+        for label in advisory:
+            warning = f"hailo-advisory:{label}"
+            if warning not in advisories:
+                advisories.append(warning)
 
     return {
         "allowed": not blockers,
         "decision": "veto" if blockers else "allow",
         "blockers": blockers,
+        "advisories": advisories,
         "reason": "hailo_local_veto" if blockers else "hailo_observability_pass",
         "events": veto_events,
+        "advisory_events": advisory_events,
         "raw_event_count": response.get("raw_event_count"),
         "output_event_count": response.get("output_event_count"),
         "retained_existing_output": response.get("retained_existing_output"),

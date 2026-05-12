@@ -1021,6 +1021,7 @@ def run_ai_readiness_scan(
     margin_notional_usdt: float | None = None,
     execution_mode: str = "testnet_exploration",
     max_candidates: int = 0,
+    exclude_symbols: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     ensure_runtime_dirs()
     root_dir = Path(output_dir).expanduser().resolve() if output_dir else READINESS_SCAN_DIR
@@ -1041,6 +1042,17 @@ def run_ai_readiness_scan(
     }
     risk_combo_queue, risk_combo_matrix_path = _risk_combo_matrix_queue_items(existing_keys=existing_keys)
     queue = [*risk_combo_queue, *queue]
+    excluded_symbols = {
+        str(symbol or "").upper()
+        for symbol in (exclude_symbols or ())
+        if str(symbol or "").strip()
+    }
+    if excluded_symbols:
+        queue = [
+            item
+            for item in queue
+            if str(_signal_from_queue_item(item).get("symbol") or "").upper() not in excluded_symbols
+        ]
     selected_queue: list[dict[str, Any]] = []
     live_scan_count = 0
     for item in queue:
@@ -1124,6 +1136,7 @@ def run_ai_readiness_scan(
         "strategy_config": str(strategy_config),
         "blueprint_config": str(blueprint_config),
         "candidate_count": len(queue),
+        "excluded_symbols": sorted(excluded_symbols),
         "scanned_count": sum(1 for item in results if item.scanned),
         "allowed_count": sum(1 for item in results if item.allowed),
         "selected_ready_candidate": selected.to_dict() if selected else None,
